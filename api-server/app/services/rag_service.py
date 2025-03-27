@@ -66,13 +66,18 @@ class RagService:
             try:
                 # AWS SDK는 환경 변수에서 자격증명을 자동으로 가져오므로 직접 전달할 필요가 없음
                 embeddings = BedrockEmbeddings(
-                    model_id="amazon.titan-embed-text-v2",
+                    model_id="amazon.titan-embed-g1-text-02",
                     region_name=region
                 )
                 logger.info("임베딩 모델 초기화 완료")
             except Exception as e:
-                logger.error(f"임베딩 모델 초기화 중 오류 발생: {str(e)}", exc_info=True)
-                raise
+                error_msg = str(e)
+                if "ValidationException" in error_msg and "model identifier is invalid" in error_msg:
+                    logger.error(f"임베딩 모델 ID가 유효하지 않습니다. 모델 ID를 확인하세요: {error_msg}", exc_info=True)
+                    raise ValueError(f"임베딩 모델 ID가 유효하지 않습니다. AWS Bedrock의 최신 모델 ID로 업데이트가 필요합니다: {error_msg}")
+                else:
+                    logger.error(f"임베딩 모델 초기화 중 오류 발생: {error_msg}", exc_info=True)
+                    raise
             
             logger.info("벡터 저장소 생성 중")
             vector_store = FAISS.from_documents(chunks, embeddings)
@@ -83,7 +88,7 @@ class RagService:
             try:
                 # AWS SDK는 환경 변수에서 자격증명을 자동으로 가져오므로 직접 전달할 필요가 없음
                 llm = ChatBedrock(
-                    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+                    model_id="anthropic.claude-3-haiku-20240307-v1:0",
                     model_kwargs={
                         "temperature": 0,
                         "max_tokens": 4096
@@ -92,8 +97,13 @@ class RagService:
                 )
                 logger.info("LLM 모델 초기화 완료")
             except Exception as e:
-                logger.error(f"LLM 모델 초기화 중 오류 발생: {str(e)}", exc_info=True)
-                raise
+                error_msg = str(e)
+                if "ValidationException" in error_msg and "model identifier is invalid" in error_msg:
+                    logger.error(f"LLM 모델 ID가 유효하지 않습니다. 모델 ID를 확인하세요: {error_msg}", exc_info=True)
+                    raise ValueError(f"LLM 모델 ID가 유효하지 않습니다. AWS Bedrock의 최신 모델 ID로 업데이트가 필요합니다: {error_msg}")
+                else:
+                    logger.error(f"LLM 모델 초기화 중 오류 발생: {error_msg}", exc_info=True)
+                    raise
             
             logger.info("대화형 검색 체인 생성 중")
             self.qa_chain = ConversationalRetrievalChain.from_llm(

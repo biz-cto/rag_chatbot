@@ -23,9 +23,3 @@ services:
     restart: always
     container_name: chatbot-nginx
 
-# 컨테이너와 사용되지 않는 이미지를 자동으로 삭제합니다
-x-kubernetes-service:
-  remove-volumes: true
-  remove-orphans: true
-  remove-images: local
-
