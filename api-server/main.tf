@@ -28,6 +28,7 @@ terraform {
 locals {
   package_dir   = "${path.module}/.lambda_package"
   zip_file_path = "${path.module}/lambda_function.zip"
+  src_dir       = "${path.module}/app"
 }
 
 # S3 버킷 참조 또는 생성 (ap-northeast-2 리전 사용)
@@ -160,59 +161,34 @@ resource "aws_iam_role_policy_attachment" "bedrock_attachment" {
 # Lambda 패키지 생성을 위한 Python 의존성 모듈 설치 및 압축
 resource "null_resource" "install_dependencies" {
   triggers = {
-    # 종속성이 변경되거나 Lambda 코드가 변경될 때만 재실행
-    dependencies_hash = fileexists("${path.module}/requirements-lambda.txt") ? filemd5("${path.module}/requirements-lambda.txt") : filemd5("${path.module}/requirements.txt")
-    lambda_hash      = filemd5("${path.module}/lambda_function.py")
-    app_dir_hash     = md5(join("", [for f in fileset("${path.module}/app", "**") : filemd5("${path.module}/app/${f}")]))
+    requirements_hash = filemd5("${local.src_dir}/requirements-lambda.txt")
+    src_hash = filemd5("${local.src_dir}/lambda_function.py")
   }
 
   provisioner "local-exec" {
-    # 패키지 디렉토리 생성
-    command = <<EOT
-      rm -rf ${local.package_dir} && mkdir -p ${local.package_dir}
+    command = <<-EOT
+      echo "Lambda 패키지 준비 중..."
+      rm -rf ${local.package_dir}
+      mkdir -p ${local.package_dir}
       
-      # requirements.txt 파일 선택
-      REQUIREMENTS_FILE="${path.module}/requirements-lambda.txt"
-      if [ ! -f "$REQUIREMENTS_FILE" ]; then
-        REQUIREMENTS_FILE="${path.module}/requirements.txt"
-      fi
+      # 소스 파일 복사
+      cp -R ${local.src_dir}/app ${local.package_dir}/
+      cp ${local.src_dir}/lambda_function.py ${local.package_dir}/
+      cp ${local.src_dir}/.env ${local.package_dir}/ 2>/dev/null || echo "환경 파일 없음, 기본값 사용"
       
-      echo "패키지 디렉토리: ${local.package_dir}"
-      echo "의존성 파일: $REQUIREMENTS_FILE"
+      # 의존성 설치 - 간소화
+      echo "Python 의존성 설치 중 (간소화됨)..."
+      pip install --target ${local.package_dir} -r ${local.src_dir}/requirements-lambda.txt
       
-      # Python 의존성 설치
-      PYTHONPATH="${local.package_dir}" pip install --upgrade pip
-      PYTHONPATH="${local.package_dir}" pip install -r $REQUIREMENTS_FILE -t ${local.package_dir} --no-cache-dir
-      
-      # 의존성 설치 확인
-      if [ $? -ne 0 ]; then
-        echo "의존성 설치 실패"
-        exit 1
-      fi
-      
-      # Lambda 함수 코드 복사
-      echo "Lambda 함수 코드 복사 중..."
-      cp ${path.module}/lambda_function.py ${local.package_dir}/
-      cp -r ${path.module}/app ${local.package_dir}/
-      
-      # .env 파일이 존재하면 복사
-      if [ -f "${path.module}/.env" ]; then
-        echo ".env 파일을 패키지에 포함시킵니다."
-        cp ${path.module}/.env ${local.package_dir}/
-      fi
-      
-      # 불필요한 파일 제거
-      echo "불필요한 파일 제거 중..."
+      # 불필요한 파일 제거 - 패키지 크기 최소화
+      echo "패키지 크기 최적화 중..."
+      find ${local.package_dir} -name "*.pyc" -type f -delete
       find ${local.package_dir} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-      find ${local.package_dir} -name "*.pyc" -delete
-      find ${local.package_dir} -name "*.dist-info" -type d -exec rm -rf {} + 2>/dev/null || true
-      find ${local.package_dir} -name "*.egg-info" -type d -exec rm -rf {} + 2>/dev/null || true
       find ${local.package_dir} -name "*.so" -type f -exec strip {} \; 2>/dev/null || true
       find ${local.package_dir} -name "tests" -type d -exec rm -rf {} + 2>/dev/null || true
       
       # Lambda에 불필요한 대용량 패키지 제거
       echo "불필요한 패키지 제거 중..."
-      rm -rf ${local.package_dir}/numpy/tests
       rm -rf ${local.package_dir}/bin
       
       # 패키지 크기 확인
@@ -250,8 +226,7 @@ resource "aws_lambda_function" "rag_chatbot" {
       S3_BUCKET_NAME    = var.s3_bucket_name
       BATCH_SIZE        = "20"  # 임베딩 처리 속도 향상
       FAST_MODE         = "true"  # 빠른 모드 활성화
-      SMART_MODE        = "false"  # 스마트 모드 비활성화 (응답속도 향상)
-      COST_DEBUG        = var.environment == "dev" ? "true" : "false"  # 개발 환경에서만 비용 디버깅 활성화
+      COST_TRACKING     = "simple"  # 간소화된 비용 추적 모드
     }
   }
 

@@ -246,84 +246,33 @@ class EmbeddingService:
         logger.error(f"최대 재시도 횟수를 초과하여 기본 임베딩 반환")
         return [0.0] * self.default_dimension 
 
-    def get_embeddings(self, texts: List[str]) -> Tuple[List[List[float]], Dict[str, int]]:
+    def get_embeddings(self, texts: List[str]) -> Tuple[List[List[float]], Dict[str, Any]]:
         """
-        텍스트 목록에 대한 임베딩 계산
+        텍스트에 대한 임베딩 생성 및 간소화된 사용량 정보 반환
         
         Parameters:
         - texts: 임베딩할 텍스트 목록
         
         Returns:
-        - 임베딩 벡터 목록, 토큰 사용량
+        - 임베딩 벡터 목록, 간소화된 사용량 정보
         """
         if not texts:
-            logger.warning("임베딩할 텍스트가 제공되지 않았습니다.")
-            return [], {"input_tokens": 0, "model_id": ""}
+            logger.warning("임베딩할 텍스트가 없습니다.")
+            return [], {"cost_estimate": "없음"}
         
+        start_time = time.time()
+        
+        # 임베딩 생성
         embeddings = []
-        token_usage = {"input_tokens": 0, "model_id": self.model_id}
+        for text in texts:
+            embedding = self.embed_query(text)
+            embeddings.append(embedding)
         
-        # 배치 처리 크기 조정
-        try:
-            batch_size = int(os.environ.get("BATCH_SIZE", "10"))
-        except ValueError:
-            batch_size = 10
-            
-        # 토큰 추정
-        total_tokens = sum(len(text.split()) for text in texts) * 1.3  # 단어당 약 1.3개 토큰으로 추정
-        token_usage["input_tokens"] = int(total_tokens)
+        # 매우 간소화된 비용 정보
+        usage_info = {
+            "cost_estimate": "최소",
+            "model_id": self.model_id,
+            "processing_time": time.time() - start_time
+        }
         
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i+batch_size]
-            batch_embeddings = self._get_embeddings_batch(batch_texts)
-            
-            if batch_embeddings:
-                embeddings.extend(batch_embeddings)
-            else:
-                # 실패한 텍스트에 대해 0으로 채워진 임베딩 생성 (차원 동일하게 유지 필요)
-                dimension = 1536  # Titan 임베딩 기본 차원
-                for _ in range(len(batch_texts)):
-                    embeddings.append([0.0] * dimension)
-        
-        logger.info(f"{len(texts)}개 텍스트에 대한 임베딩 계산 완료, 토큰: {token_usage}")
-        return embeddings, token_usage
-
-    def _get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """
-        텍스트 목록에 대한 임베딩 계산
-        
-        Parameters:
-        - texts: 임베딩할 텍스트 목록
-        
-        Returns:
-        - 임베딩 벡터 목록
-        """
-        if not texts:
-            logger.warning("임베딩할 텍스트가 제공되지 않았습니다.")
-            return []
-        
-        embeddings = []
-        
-        # 배치 처리
-        for i in range(0, len(texts), self.batch_size):
-            batch_texts = texts[i:i+self.batch_size]
-            logger.info(f"문서 임베딩 배치 처리 중: {i+1}-{i+len(batch_texts)}/{len(texts)}")
-            
-            # 배치의 각 항목에 대해 임베딩 생성
-            batch_embeddings = []
-            for text in batch_texts:
-                try:
-                    embedding = self._get_embedding(text)
-                    batch_embeddings.append(embedding)
-                except Exception as e:
-                    logger.error(f"배치 임베딩 중 오류 발생: {str(e)}")
-                    # 오류 발생 시 기본 임베딩 사용
-                    batch_embeddings.append([0.0] * self.default_dimension)
-            
-            embeddings.extend(batch_embeddings)
-            
-            # 배치 간 짧은 지연 (API 제한 방지)
-            if i + self.batch_size < len(texts):
-                time.sleep(0.5)
-        
-        return embeddings 
+        return embeddings, usage_info 
