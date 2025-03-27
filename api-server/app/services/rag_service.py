@@ -67,7 +67,7 @@ class RagService:
                 # AWS SDK는 환경 변수에서 자격증명을 자동으로 가져오므로 직접 전달할 필요가 없음
                 embeddings = BedrockEmbeddings(
                     model_id="amazon.titan-embed-text-v1",
-                    region_name=region
+                    region_name="us-east-1"
                 )
                 logger.info("임베딩 모델 초기화 완료")
             except Exception as e:
@@ -93,7 +93,7 @@ class RagService:
                         "temperature": 0,
                         "max_tokens": 4096
                     },
-                    region_name=region
+                    region_name="us-east-1"
                 )
                 logger.info("LLM 모델 초기화 완료")
             except Exception as e:
