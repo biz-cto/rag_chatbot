@@ -1,0 +1,66 @@
+service: rag-chatbot
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: ${opt:region, 'ap-northeast-2'}
+  timeout: 300  # 5분 (최대 Lambda 시간)
+  memorySize: 1024  # 1GB
+  environment:
+    AWS_ACCESS_KEY_ID: ${env:AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${env:AWS_SECRET_ACCESS_KEY}
+    AWS_REGION: ${env:AWS_REGION, 'ap-northeast-2'}
+    S3_BUCKET_NAME: ${env:S3_BUCKET_NAME}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:ListBucket
+          Resource:
+            - "arn:aws:s3:::${env:S3_BUCKET_NAME}"
+            - "arn:aws:s3:::${env:S3_BUCKET_NAME}/*"
+        - Effect: Allow
+          Action:
+            - bedrock:InvokeModel
+          Resource: "*"
+
+functions:
+  chatApi:
+    handler: lambda_function.lambda_handler
+    events:
+      - http:
+          path: /chat
+          method: post
+          cors: true
+      - http:
+          path: /chat/reset
+          method: post
+          cors: true
+
+package:
+  patterns:
+    - '!node_modules/**'
+    - '!.venv/**'
+    - '!.env'
+    - '!.git/**'
+    - '!tests/**'
+    - '!.gitignore'
+    - '!README.md'
+    - '!Dockerfile'
+    - '!docker-compose.yml'
+    - '!nginx/**'
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    fileName: requirements-lambda.txt
+    zip: true
+    slim: true
+    useDownloadCache: true
+    useStaticCache: true 
