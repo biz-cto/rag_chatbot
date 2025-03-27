@@ -129,13 +129,28 @@ class RagService:
             
             if source_documents:
                 answer += "\n\n참고 문서:"
-                unique_sources = set()
-                for doc in source_documents:
+                unique_sources = {}  # 출처별 내용을 저장하는 사전
+                for i, doc in enumerate(source_documents):
                     source = doc.metadata.get("source", "알 수 없는 소스")
+                    content = doc.page_content.strip()
+                    
+                    # 출처가 처음 등장하면 리스트 생성
                     if source not in unique_sources:
-                        unique_sources.add(source)
-                        answer += f"\n- {source}"
-                        logger.debug(f"참고 문서: {source}")
+                        unique_sources[source] = []
+                    
+                    # 해당 출처에 내용 추가 (중복 방지)
+                    if content not in unique_sources[source]:
+                        unique_sources[source].append(content)
+                
+                # 출처별로 참고 내용 추가
+                for source, contents in unique_sources.items():
+                    answer += f"\n\n- {source}:"
+                    for i, content in enumerate(contents):
+                        # 너무 긴 내용은 적절히 잘라서 보여줌
+                        if len(content) > 200:
+                            content = content[:200] + "..."
+                        answer += f"\n  {i+1}. {content}"
+                    logger.debug(f"참고 문서: {source}")
             
             logger.info("응답 생성 완료")
             return answer
