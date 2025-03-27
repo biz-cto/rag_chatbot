@@ -1,11 +1,17 @@
+version: '3.8'
+
 services:
   chatbot-api:
-    build: .
+    build:
+      context: .
     env_file:
       - .env
     ports:
       - "8000:8000"
     restart: always
+    image: chatbot-api:latest
+    container_name: chatbot-api
+
   nginx:
     image: nginx:latest
     ports:
@@ -15,4 +21,11 @@ services:
     depends_on:
       - chatbot-api
     restart: always
+    container_name: chatbot-nginx
+
+# 컨테이너와 사용되지 않는 이미지를 자동으로 삭제합니다
+x-kubernetes-service:
+  remove-volumes: true
+  remove-orphans: true
+  remove-images: local
 
