@@ -27,10 +27,11 @@ class BedrockClient:
         Parameters:
         - aws_region: AWS 리전
         """
-        self.aws_region = aws_region
-        self.bedrock_runtime = self._create_bedrock_client(aws_region)
-        # 기본 모델 - Claude 3 Sonnet
-        self.model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+        # Bedrock은 무조건 us-east-1 리전 사용
+        self.aws_region = "us-east-1"
+        self.bedrock_runtime = self._create_bedrock_client(self.aws_region)
+        # 기본 모델 - Claude 3 Haiku (Sonnet 대신 더 가벼운 모델 사용)
+        self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"
         # 폴백 모델
         self.fallback_model_id = "anthropic.claude-instant-v1"
         self.max_tokens = 4096
@@ -39,7 +40,7 @@ class BedrockClient:
         self.max_retries = 3
         self.retry_base_delay = 1.0
         
-        logger.info(f"BedrockClient, 리전: {aws_region}, 초기화 완료 - 기본 모델: {self.model_id}")
+        logger.info(f"BedrockClient, 리전: {self.aws_region}, 초기화 완료 - 기본 모델: {self.model_id}")
     
     def _create_bedrock_client(self, aws_region: str):
         """
@@ -52,27 +53,14 @@ class BedrockClient:
         - Bedrock 클라이언트
         """
         try:
-            # 간단한 클라이언트 생성 - 재시도 로직은 직접 관리
-            session = boto3.Session(region_name=aws_region)
-            
-            # 클라이언트 생성 시도
+            # 단순한 클라이언트 생성
             logger.info(f"bedrock-runtime 서비스 클라이언트 생성 시도: 리전={aws_region}")
-            bedrock_client = session.client(
-                service_name='bedrock-runtime', 
-                region_name=aws_region
-            )
+            bedrock_client = boto3.client('bedrock-runtime', region_name=aws_region)
             logger.info("bedrock-runtime 클라이언트 생성 성공")
             return bedrock_client
         except Exception as e:
             logger.error(f"Bedrock 클라이언트 생성 실패: {str(e)}")
-            
-            # 폴백: 서비스 이름에 버전 포함해서 시도
-            try:
-                logger.info("대체 방법으로 bedrock 클라이언트 생성 시도")
-                return boto3.client('bedrock', region_name=aws_region)
-            except Exception as e2:
-                logger.error(f"대체 bedrock 클라이언트 생성도 실패: {str(e2)}")
-                return None
+            return None
     
     def _is_bedrock_available(self, model_id: str) -> bool:
         """

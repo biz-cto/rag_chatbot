@@ -120,9 +120,9 @@ resource "aws_iam_policy" "bedrock_policy" {
         ]
         Effect   = "Allow"
         Resource = [
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v1",
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0",
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-instant-v1"
+          "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v1",
+          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
+          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-instant-v1"
         ]
       },
       {

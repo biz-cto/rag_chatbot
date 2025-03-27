@@ -28,8 +28,9 @@ class EmbeddingService:
         Parameters:
         - aws_region: AWS 리전
         """
-        self.aws_region = aws_region
-        self.bedrock_runtime = self._create_bedrock_client(aws_region)
+        # Bedrock은 무조건 us-east-1 리전 사용
+        self.aws_region = "us-east-1"
+        self.bedrock_runtime = self._create_bedrock_client(self.aws_region)
         # 기본 임베딩 모델
         self.model_id = "amazon.titan-embed-text-v1"
         # 재시도 설정
@@ -39,7 +40,7 @@ class EmbeddingService:
         # 환경 변수에서 배치 크기 설정 가져오기
         self.batch_size = int(os.environ.get("BATCH_SIZE", "10"))
         
-        logger.info(f"EmbeddingService, 리전: {aws_region}, 초기화 완료 - 모델: {self.model_id}, 배치 크기: {self.batch_size}")
+        logger.info(f"EmbeddingService, 리전: {self.aws_region}, 초기화 완료 - 모델: {self.model_id}, 배치 크기: {self.batch_size}")
         
         # 임베딩 디폴트 차원
         self.default_dimension = 1536
@@ -55,15 +56,9 @@ class EmbeddingService:
         - Bedrock 클라이언트
         """
         try:
-            # 간단한 클라이언트 생성 - 재시도 로직은 직접 관리
-            session = boto3.Session(region_name=aws_region)
-            
-            # 클라이언트 생성 시도
+            # 단순한 클라이언트 생성
             logger.info(f"bedrock-runtime 서비스 클라이언트 생성 시도: 리전={aws_region}")
-            bedrock_client = session.client(
-                service_name='bedrock-runtime', 
-                region_name=aws_region
-            )
+            bedrock_client = boto3.client('bedrock-runtime', region_name=aws_region)
             logger.info("bedrock-runtime 클라이언트 생성 성공")
             return bedrock_client
         except Exception as e:

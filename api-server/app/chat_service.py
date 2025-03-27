@@ -27,18 +27,19 @@ class ChatService:
         - aws_region: AWS 리전
         """
         self.s3_bucket_name = s3_bucket_name
-        self.aws_region = aws_region
+        # Bedrock은 무조건 us-east-1 리전 사용
+        self.aws_region = "us-east-1"
         self.conversations: Dict[str, List[Dict[str, str]]] = {}
         
         # 단계적으로 서비스 컴포넌트 초기화
-        logger.info(f"ChatService 초기화 시작 - 버킷: {s3_bucket_name}, 리전: {aws_region}")
+        logger.info(f"ChatService 초기화 시작 - 버킷: {s3_bucket_name}, 리전: {self.aws_region}")
         
         try:
             # 임베딩 서비스 초기화
             logger.info("EmbeddingService 초기화 중...")
-            self.embedding_service = EmbeddingService(aws_region)
+            self.embedding_service = EmbeddingService(self.aws_region)
             
-            # 문서 저장소 초기화
+            # 문서 저장소 초기화 (S3는 원래 리전 사용)
             logger.info("DocumentStore 초기화 중...")
             self.document_store = DocumentStore(s3_bucket_name, aws_region)
             
@@ -48,12 +49,12 @@ class ChatService:
             
             # LLM 클라이언트 초기화
             logger.info("BedrockClient 초기화 중...")
-            self.llm = BedrockClient(aws_region)
+            self.llm = BedrockClient(self.aws_region)
             
             # 모든 컴포넌트 초기화 확인
             self._check_components()
             
-            logger.info(f"ChatService 초기화 완료 - 버킷: {s3_bucket_name}, 리전: {aws_region}")
+            logger.info(f"ChatService 초기화 완료 - 버킷: {s3_bucket_name}, 리전: {self.aws_region}")
         except Exception as e:
             logger.error(f"ChatService 초기화 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
