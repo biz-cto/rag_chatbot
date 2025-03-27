@@ -1,5 +1,13 @@
+# 기본 provider는 Bedrock 서비스를 위한 us-east-1 리전 사용
 provider "aws" {
   region = var.aws_region
+  alias  = "bedrock_region"
+}
+
+# S3 버킷을 위한 ap-northeast-2 provider
+provider "aws" {
+  region = "ap-northeast-2"
+  alias  = "s3_region"
 }
 
 terraform {
@@ -22,10 +30,11 @@ locals {
   zip_file_path = "${path.module}/lambda_function.zip"
 }
 
-# S3 버킷 참조 또는 생성
+# S3 버킷 참조 또는 생성 (ap-northeast-2 리전 사용)
 resource "aws_s3_bucket" "pdfs_bucket" {
-  count  = var.create_s3_bucket ? 1 : 0
-  bucket = var.s3_bucket_name
+  count    = var.create_s3_bucket ? 1 : 0
+  provider = aws.s3_region
+  bucket   = var.s3_bucket_name
   
   tags = {
     Name        = var.s3_bucket_name
@@ -35,8 +44,9 @@ resource "aws_s3_bucket" "pdfs_bucket" {
 }
 
 data "aws_s3_bucket" "existing_bucket" {
-  count  = var.create_s3_bucket ? 0 : 1
-  bucket = var.s3_bucket_name
+  count    = var.create_s3_bucket ? 0 : 1
+  provider = aws.s3_region
+  bucket   = var.s3_bucket_name
 }
 
 locals {
@@ -45,6 +55,7 @@ locals {
 
 # Lambda 함수를 위한 IAM 역할
 resource "aws_iam_role" "lambda_role" {
+  provider = aws.s3_region
   name = "rag-chatbot-lambda-role"
 
   assume_role_policy = jsonencode({
@@ -68,12 +79,14 @@ resource "aws_iam_role" "lambda_role" {
 
 # Lambda에 필요한 정책 첨부
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  provider   = aws.s3_region
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 # S3 접근 정책 추가
 resource "aws_iam_policy" "s3_policy" {
+  provider    = aws.s3_region
   name        = "rag-chatbot-s3-policy"
   description = "RAG Chatbot S3 액세스 정책"
 
@@ -96,12 +109,14 @@ resource "aws_iam_policy" "s3_policy" {
 }
 
 resource "aws_iam_role_policy_attachment" "s3_attachment" {
+  provider   = aws.s3_region
   role       = aws_iam_role.lambda_role.name
   policy_arn = aws_iam_policy.s3_policy.arn
 }
 
 # Bedrock 액세스 정책 추가
 resource "aws_iam_policy" "bedrock_policy" {
+  provider    = aws.s3_region
   name        = "rag-chatbot-bedrock-policy"
   description = "RAG Chatbot Bedrock 액세스 정책"
 
@@ -138,6 +153,7 @@ resource "aws_iam_policy" "bedrock_policy" {
 }
 
 resource "aws_iam_role_policy_attachment" "bedrock_attachment" {
+  provider   = aws.s3_region
   role       = aws_iam_role.lambda_role.name
   policy_arn = aws_iam_policy.bedrock_policy.arn
 }
@@ -219,6 +235,7 @@ data "archive_file" "lambda_package" {
 
 # Lambda 함수 정의
 resource "aws_lambda_function" "rag_chatbot" {
+  provider         = aws.s3_region
   function_name    = "rag-chatbot"
   role             = aws_iam_role.lambda_role.arn
   handler          = "lambda_function.lambda_handler"
@@ -230,8 +247,8 @@ resource "aws_lambda_function" "rag_chatbot" {
 
   environment {
     variables = {
-      CUSTOM_AWS_REGION   = var.aws_region
-      S3_BUCKET_NAME     = var.s3_bucket_name
+      CUSTOM_AWS_REGION = "us-east-1"  # Bedrock은 us-east-1 리전 강제 사용
+      S3_BUCKET_NAME    = var.s3_bucket_name
       LAMBDA_ENVIRONMENT = "true"
       BATCH_SIZE         = tostring(var.batch_size)
     }
@@ -250,6 +267,7 @@ resource "aws_lambda_function" "rag_chatbot" {
 
 # CloudWatch 로그 그룹
 resource "aws_cloudwatch_log_group" "lambda_logs" {
+  provider          = aws.s3_region
   name              = "/aws/lambda/${aws_lambda_function.rag_chatbot.function_name}"
   retention_in_days = var.log_retention_days
   
@@ -261,6 +279,7 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
 
 # API Gateway REST API
 resource "aws_api_gateway_rest_api" "chatbot_api" {
+  provider    = aws.s3_region
   name        = "rag-chatbot-api"
   description = "API for RAG Chatbot"
 
@@ -276,6 +295,7 @@ resource "aws_api_gateway_rest_api" "chatbot_api" {
 
 # /chat 리소스
 resource "aws_api_gateway_resource" "chat_resource" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   parent_id   = aws_api_gateway_rest_api.chatbot_api.root_resource_id
   path_part   = "chat"
@@ -283,6 +303,7 @@ resource "aws_api_gateway_resource" "chat_resource" {
 
 # CORS 설정을 위한 OPTIONS 메서드
 resource "aws_api_gateway_method" "chat_options" {
+  provider      = aws.s3_region
   rest_api_id   = aws_api_gateway_rest_api.chatbot_api.id
   resource_id   = aws_api_gateway_resource.chat_resource.id
   http_method   = "OPTIONS"
@@ -290,6 +311,7 @@ resource "aws_api_gateway_method" "chat_options" {
 }
 
 resource "aws_api_gateway_integration" "chat_options_integration" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   resource_id = aws_api_gateway_resource.chat_resource.id
   http_method = aws_api_gateway_method.chat_options.http_method
@@ -303,6 +325,7 @@ resource "aws_api_gateway_integration" "chat_options_integration" {
 }
 
 resource "aws_api_gateway_method_response" "chat_options_response" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   resource_id = aws_api_gateway_resource.chat_resource.id
   http_method = aws_api_gateway_method.chat_options.http_method
@@ -316,6 +339,7 @@ resource "aws_api_gateway_method_response" "chat_options_response" {
 }
 
 resource "aws_api_gateway_integration_response" "chat_options_integration_response" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   resource_id = aws_api_gateway_resource.chat_resource.id
   http_method = aws_api_gateway_method.chat_options.http_method
@@ -330,6 +354,7 @@ resource "aws_api_gateway_integration_response" "chat_options_integration_respon
 
 # POST 메서드 - 채팅 질문 처리
 resource "aws_api_gateway_method" "chat_post" {
+  provider      = aws.s3_region
   rest_api_id   = aws_api_gateway_rest_api.chatbot_api.id
   resource_id   = aws_api_gateway_resource.chat_resource.id
   http_method   = "POST"
@@ -337,6 +362,7 @@ resource "aws_api_gateway_method" "chat_post" {
 }
 
 resource "aws_api_gateway_integration" "chat_post_integration" {
+  provider               = aws.s3_region
   rest_api_id             = aws_api_gateway_rest_api.chatbot_api.id
   resource_id             = aws_api_gateway_resource.chat_resource.id
   http_method             = aws_api_gateway_method.chat_post.http_method
@@ -346,6 +372,7 @@ resource "aws_api_gateway_integration" "chat_post_integration" {
 }
 
 resource "aws_api_gateway_method_response" "chat_post_response" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   resource_id = aws_api_gateway_resource.chat_resource.id
   http_method = aws_api_gateway_method.chat_post.http_method
@@ -358,6 +385,7 @@ resource "aws_api_gateway_method_response" "chat_post_response" {
 
 # /chat/reset 리소스 - 대화 기록 초기화
 resource "aws_api_gateway_resource" "reset_resource" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   parent_id   = aws_api_gateway_resource.chat_resource.id
   path_part   = "reset"
@@ -365,6 +393,7 @@ resource "aws_api_gateway_resource" "reset_resource" {
 
 # CORS 설정을 위한 OPTIONS 메서드
 resource "aws_api_gateway_method" "reset_options" {
+  provider      = aws.s3_region
   rest_api_id   = aws_api_gateway_rest_api.chatbot_api.id
   resource_id   = aws_api_gateway_resource.reset_resource.id
   http_method   = "OPTIONS"
@@ -372,6 +401,7 @@ resource "aws_api_gateway_method" "reset_options" {
 }
 
 resource "aws_api_gateway_integration" "reset_options_integration" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   resource_id = aws_api_gateway_resource.reset_resource.id
   http_method = aws_api_gateway_method.reset_options.http_method
@@ -385,6 +415,7 @@ resource "aws_api_gateway_integration" "reset_options_integration" {
 }
 
 resource "aws_api_gateway_method_response" "reset_options_response" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   resource_id = aws_api_gateway_resource.reset_resource.id
   http_method = aws_api_gateway_method.reset_options.http_method
@@ -398,6 +429,7 @@ resource "aws_api_gateway_method_response" "reset_options_response" {
 }
 
 resource "aws_api_gateway_integration_response" "reset_options_integration_response" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   resource_id = aws_api_gateway_resource.reset_resource.id
   http_method = aws_api_gateway_method.reset_options.http_method
@@ -412,6 +444,7 @@ resource "aws_api_gateway_integration_response" "reset_options_integration_respo
 
 # POST 메서드 - 대화 기록 초기화
 resource "aws_api_gateway_method" "reset_post" {
+  provider      = aws.s3_region
   rest_api_id   = aws_api_gateway_rest_api.chatbot_api.id
   resource_id   = aws_api_gateway_resource.reset_resource.id
   http_method   = "POST"
@@ -419,6 +452,7 @@ resource "aws_api_gateway_method" "reset_post" {
 }
 
 resource "aws_api_gateway_integration" "reset_post_integration" {
+  provider               = aws.s3_region
   rest_api_id             = aws_api_gateway_rest_api.chatbot_api.id
   resource_id             = aws_api_gateway_resource.reset_resource.id
   http_method             = aws_api_gateway_method.reset_post.http_method
@@ -428,6 +462,7 @@ resource "aws_api_gateway_integration" "reset_post_integration" {
 }
 
 resource "aws_api_gateway_method_response" "reset_post_response" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   resource_id = aws_api_gateway_resource.reset_resource.id
   http_method = aws_api_gateway_method.reset_post.http_method
@@ -440,6 +475,7 @@ resource "aws_api_gateway_method_response" "reset_post_response" {
 
 # Lambda 함수 호출 권한 설정
 resource "aws_lambda_permission" "api_gateway_chat" {
+  provider      = aws.s3_region
   statement_id  = "AllowAPIGatewayInvokeChat"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.rag_chatbot.function_name
@@ -448,6 +484,7 @@ resource "aws_lambda_permission" "api_gateway_chat" {
 }
 
 resource "aws_lambda_permission" "api_gateway_reset" {
+  provider      = aws.s3_region
   statement_id  = "AllowAPIGatewayInvokeReset"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.rag_chatbot.function_name
@@ -457,6 +494,7 @@ resource "aws_lambda_permission" "api_gateway_reset" {
 
 # API Gateway 배포
 resource "aws_api_gateway_deployment" "chatbot_deployment" {
+  provider    = aws.s3_region
   rest_api_id = aws_api_gateway_rest_api.chatbot_api.id
   
   depends_on = [
@@ -485,6 +523,7 @@ resource "aws_api_gateway_deployment" "chatbot_deployment" {
 
 # API 스테이지 정의
 resource "aws_api_gateway_stage" "prod" {
+  provider      = aws.s3_region
   deployment_id = aws_api_gateway_deployment.chatbot_deployment.id
   rest_api_id   = aws_api_gateway_rest_api.chatbot_api.id
   stage_name    = "prod"
