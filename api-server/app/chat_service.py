@@ -172,12 +172,13 @@ class ChatService:
             else:
                 return "죄송합니다. 현재 AI 응답 생성에 문제가 있습니다. 잠시 후 다시 시도해 주세요."
                 
-        # 사용자 대화 기록 (최근 10개 메시지만 사용)
-        conversation_history = self.conversations[session_id][-10:]
+        # 빠른 응답을 위해 대화 기록 제한 (최근 5개만 사용)
+        conversation_history = self.conversations[session_id][-5:]
         
-        # 프롬프트 구성
+        # 빠른 응답을 위해 프롬프트 간소화
         system_prompt = f"""당신은 도움이 되는 AI 어시스턴트입니다. 
-아래 제공된 컨텍스트를 기반으로 사용자 질문에 정확하게 답변하세요.
+아래 제공된 컨텍스트를 기반으로 사용자 질문에 간결하게 답변하세요.
+답변은 짧고 직접적으로 작성하세요.
 컨텍스트에 관련 정보가 없는 경우, '이 정보는 제공된 문서에 포함되어 있지 않습니다.'라고 답변하세요.
 
 컨텍스트:

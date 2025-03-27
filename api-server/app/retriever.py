@@ -86,22 +86,22 @@ class Retriever:
             self.is_embedding_initialized = False
             raise RetrieverError(f"임베딩 초기화 실패: {str(e)}")
     
-    def retrieve(self, query: str, top_k: int = 5, retry_init: bool = True) -> List[Dict[str, Any]]:
+    def retrieve(self, query: str, top_k: int = 3, retry_init: bool = True) -> List[Dict[str, Any]]:
         """
         쿼리와 관련된 문서 검색
         
         Parameters:
         - query: 검색 쿼리
-        - top_k: 반환할 최대 문서 수
+        - top_k: 반환할 최대 문서 수 (빠른 응답을 위해 3개로 줄임)
         - retry_init: 실패 시 임베딩 재시도 여부
         
         Returns:
         - 관련 문서 목록
         """
         # 검색 요청 로그
-        logger.info(f"쿼리 검색 요청: '{query[:50]}...' (길이: {len(query)})")
+        logger.info(f"쿼리 검색 요청: '{query[:30]}...' (길이: {len(query)})")
         
-        # 쿼리 유효성 검사
+        # 빠른 응답을 위해 비어있는 검색 쿼리는 바로 빈 목록 반환
         if not query or not query.strip():
             logger.warning("빈 쿼리로 검색 요청이 들어왔습니다.")
             return []

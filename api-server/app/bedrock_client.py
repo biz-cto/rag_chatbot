@@ -30,17 +30,18 @@ class BedrockClient:
         # Bedrock은 무조건 us-east-1 리전 사용
         self.aws_region = "us-east-1"
         self.bedrock_runtime = self._create_bedrock_client(self.aws_region)
-        # 기본 모델 - Claude 3 Haiku (Sonnet 대신 더 가벼운 모델 사용)
-        self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"
-        # 폴백 모델
-        self.fallback_model_id = "anthropic.claude-instant-v1"
-        self.max_tokens = 4096
+        # 기본 모델 - 더 빠른 응답을 위해 Claude Instant 사용
+        self.model_id = "anthropic.claude-instant-v1"
+        # 폴백 모델 없음 (이미 가장 빠른 모델 사용)
+        self.fallback_model_id = self.model_id
+        # 빠른 응답을 위해 토큰 수 축소
+        self.max_tokens = 1024
         
         # 재시도 설정
-        self.max_retries = 3
-        self.retry_base_delay = 1.0
+        self.max_retries = 2
+        self.retry_base_delay = 0.5
         
-        logger.info(f"BedrockClient, 리전: {self.aws_region}, 초기화 완료 - 기본 모델: {self.model_id}")
+        logger.info(f"BedrockClient, 리전: {self.aws_region}, 초기화 완료 - 기본 모델: {self.model_id} (빠른 응답 모드)")
     
     def _create_bedrock_client(self, aws_region: str):
         """
@@ -132,13 +133,15 @@ class BedrockClient:
         
         while retry_attempt <= self.max_retries:
             try:
-                # Anthropic Claude 3 메시지 형식
+                # Anthropic Claude 메시지 형식
                 request_body = {
                     "anthropic_version": "bedrock-2023-05-31",
                     "max_tokens": max_tokens,
                     "system": system_prompt,
                     "messages": conversation_history,
-                    "temperature": 0.7
+                    "temperature": 0.5,  # 더 결정적인 응답을 위해 온도 낮춤
+                    "top_p": 0.9,        # 상위 확률 단어만 선택
+                    "top_k": 50          # 상위 50개 토큰으로 제한
                 }
                 
                 # Bedrock 호출
@@ -164,11 +167,6 @@ class BedrockClient:
                 
                 # 사용량 제한이나 모델 사용 불가 오류일 경우
                 if error_code in ('ThrottlingException', 'ServiceUnavailableException', 'ModelNotReadyException'):
-                    # 폴백 모델로 전환
-                    if retry_attempt == 1 and use_model_id != self.fallback_model_id:
-                        logger.warning(f"폴백 모델로 전환: {self.fallback_model_id}")
-                        use_model_id = self.fallback_model_id
-                    
                     # 지수 백오프로 재시도
                     wait_time = self._exponential_backoff(retry_attempt)
                     logger.info(f"{wait_time:.2f}초 후 재시도")

@@ -136,7 +136,6 @@ resource "aws_iam_policy" "bedrock_policy" {
         Effect   = "Allow"
         Resource = [
           "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v1",
-          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
           "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-instant-v1"
         ]
       },
@@ -250,7 +249,8 @@ resource "aws_lambda_function" "rag_chatbot" {
       CUSTOM_AWS_REGION = "us-east-1"  # Bedrock은 us-east-1 리전 강제 사용
       S3_BUCKET_NAME    = var.s3_bucket_name
       LAMBDA_ENVIRONMENT = "true"
-      BATCH_SIZE         = tostring(var.batch_size)
+      BATCH_SIZE         = "20"         # 더 빠른 임베딩 처리를 위해 배치 크기 증가
+      FAST_MODE          = "true"       # 빠른 응답 모드 활성화
     }
   }
 

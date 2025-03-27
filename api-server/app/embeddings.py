@@ -33,14 +33,14 @@ class EmbeddingService:
         self.bedrock_runtime = self._create_bedrock_client(self.aws_region)
         # 기본 임베딩 모델
         self.model_id = "amazon.titan-embed-text-v1"
-        # 재시도 설정
-        self.max_retries = 5
-        self.retry_base_delay = 0.5
+        # 재시도 설정 - 빠른 응답 위해 줄임
+        self.max_retries = 3
+        self.retry_base_delay = 0.2
         
-        # 환경 변수에서 배치 크기 설정 가져오기
-        self.batch_size = int(os.environ.get("BATCH_SIZE", "10"))
+        # 환경 변수에서 배치 크기 설정 가져오기 - 더 큰 배치로 빠른 처리
+        self.batch_size = int(os.environ.get("BATCH_SIZE", "20"))
         
-        logger.info(f"EmbeddingService, 리전: {self.aws_region}, 초기화 완료 - 모델: {self.model_id}, 배치 크기: {self.batch_size}")
+        logger.info(f"EmbeddingService, 리전: {self.aws_region}, 초기화 완료 - 모델: {self.model_id}, 배치 크기: {self.batch_size} (빠른 응답 모드)")
         
         # 임베딩 디폴트 차원
         self.default_dimension = 1536
