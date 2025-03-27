@@ -7,12 +7,14 @@ provider:
   runtime: python3.11
   region: ${opt:region, 'ap-northeast-2'}
   timeout: 300  # 5분 (최대 Lambda 시간)
-  memorySize: 1024  # 1GB
+  memorySize: 2048  # 2GB (임베딩 처리에 충분한 메모리)
+  logRetentionInDays: 14  # 로그 그룹 보존 기간 (14일)
   environment:
     AWS_ACCESS_KEY_ID: ${env:AWS_ACCESS_KEY_ID}
     AWS_SECRET_ACCESS_KEY: ${env:AWS_SECRET_ACCESS_KEY}
     AWS_REGION: ${env:AWS_REGION, 'ap-northeast-2'}
     S3_BUCKET_NAME: ${env:S3_BUCKET_NAME}
+    LAMBDA_ENVIRONMENT: 'true'  # Lambda 환경임을 표시
   iam:
     role:
       statements:
@@ -27,10 +29,17 @@ provider:
           Action:
             - bedrock:InvokeModel
           Resource: "*"
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: "*"
 
 functions:
   chatApi:
     handler: lambda_function.lambda_handler
+    description: "RAG 챗봇 API - PDF 문서에 기반한 질의응답 시스템"
     events:
       - http:
           path: /chat
@@ -40,6 +49,8 @@ functions:
           path: /chat/reset
           method: post
           cors: true
+    # 콜드 스타트 최소화를 위한 웜 인스턴스 유지
+    provisionedConcurrency: 1
 
 package:
   patterns:
@@ -53,6 +64,8 @@ package:
     - '!Dockerfile'
     - '!docker-compose.yml'
     - '!nginx/**'
+    - '!**/__pycache__/**'
+    - '!*.pyc'
 
 plugins:
   - serverless-python-requirements

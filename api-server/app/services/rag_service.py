@@ -64,17 +64,49 @@ class RagService:
             # 임베딩 및 벡터 저장소 생성
             logger.info("임베딩 모델 초기화 중")
             try:
-                # AWS SDK는 환경 변수에서 자격증명을 자동으로 가져오므로 직접 전달할 필요가 없음
+                # 사용 가능한 모델 ID 목록 (최신 정보로 업데이트 필요)
+                valid_embedding_models = [
+                    "amazon.titan-embed-g1-text-02",
+                    "amazon.titan-embed-text-v2",
+                    "amazon.titan-embed-text-v1"
+                ]
+                
+                # 사용할 임베딩 모델 ID
+                embedding_model_id = "amazon.titan-embed-g1-text-02"
+                
+                # 모델 ID 실패 시 대체 모델 시도
+                if embedding_model_id not in valid_embedding_models:
+                    logger.warning(f"선택한 임베딩 모델 ID({embedding_model_id})가 유효하지 않을 수 있습니다.")
+                
+                # 임베딩 모델 초기화
+                logger.info(f"임베딩 모델 초기화 중: {embedding_model_id}")
                 embeddings = BedrockEmbeddings(
-                    model_id="amazon.titan-embed-text-v1",
-                    region_name="us-east-1"
+                    model_id=embedding_model_id,
+                    region_name=region
                 )
                 logger.info("임베딩 모델 초기화 완료")
             except Exception as e:
                 error_msg = str(e)
                 if "ValidationException" in error_msg and "model identifier is invalid" in error_msg:
-                    logger.error(f"임베딩 모델 ID가 유효하지 않습니다. 모델 ID를 확인하세요: {error_msg}", exc_info=True)
-                    raise ValueError(f"임베딩 모델 ID가 유효하지 않습니다. AWS Bedrock의 최신 모델 ID로 업데이트가 필요합니다: {error_msg}")
+                    # 대체 모델 시도
+                    for fallback_model in valid_embedding_models:
+                        if fallback_model == embedding_model_id:
+                            continue
+                        
+                        try:
+                            logger.warning(f"대체 임베딩 모델로 시도: {fallback_model}")
+                            embeddings = BedrockEmbeddings(
+                                model_id=fallback_model,
+                                region_name=region
+                            )
+                            logger.info(f"대체 임베딩 모델 초기화 완료: {fallback_model}")
+                            break
+                        except Exception as fallback_e:
+                            logger.error(f"대체 임베딩 모델 {fallback_model} 초기화 실패: {str(fallback_e)}")
+                    else:
+                        # 모든 대체 모델이 실패한 경우
+                        logger.error(f"임베딩 모델 ID가 유효하지 않습니다. 모든 대체 모델이 실패했습니다: {error_msg}")
+                        raise ValueError(f"임베딩 모델 ID가 유효하지 않습니다. AWS Bedrock의 최신 모델 ID로 업데이트가 필요합니다: {error_msg}")
                 else:
                     logger.error(f"임베딩 모델 초기화 중 오류 발생: {error_msg}", exc_info=True)
                     raise
@@ -86,9 +118,24 @@ class RagService:
             # 대화형 검색 체인 생성
             logger.info("LLM 모델 초기화 중")
             try:
-                # AWS SDK는 환경 변수에서 자격증명을 자동으로 가져오므로 직접 전달할 필요가 없음
+                # 사용 가능한 LLM 모델 ID 목록 (최신 정보로 업데이트 필요)
+                valid_llm_models = [
+                    "anthropic.claude-3-haiku-20240307-v1:0",
+                    "anthropic.claude-3-sonnet-20240229-v1:0",
+                    "anthropic.claude-instant-v1"
+                ]
+                
+                # 사용할 LLM 모델 ID
+                llm_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+                
+                # 모델 ID 실패 시 대체 모델 시도
+                if llm_model_id not in valid_llm_models:
+                    logger.warning(f"선택한 LLM 모델 ID({llm_model_id})가 유효하지 않을 수 있습니다.")
+                
+                # LLM 모델 초기화
+                logger.info(f"LLM 모델 초기화 중: {llm_model_id}")
                 llm = ChatBedrock(
-                    model_id="anthropic.claude-3-haiku-20240307-v1:0",
+                    model_id=llm_model_id,
                     model_kwargs={
                         "temperature": 0,
                         "max_tokens": 4096
@@ -99,8 +146,29 @@ class RagService:
             except Exception as e:
                 error_msg = str(e)
                 if "ValidationException" in error_msg and "model identifier is invalid" in error_msg:
-                    logger.error(f"LLM 모델 ID가 유효하지 않습니다. 모델 ID를 확인하세요: {error_msg}", exc_info=True)
-                    raise ValueError(f"LLM 모델 ID가 유효하지 않습니다. AWS Bedrock의 최신 모델 ID로 업데이트가 필요합니다: {error_msg}")
+                    # 대체 모델 시도
+                    for fallback_model in valid_llm_models:
+                        if fallback_model == llm_model_id:
+                            continue
+                        
+                        try:
+                            logger.warning(f"대체 LLM 모델로 시도: {fallback_model}")
+                            llm = ChatBedrock(
+                                model_id=fallback_model,
+                                model_kwargs={
+                                    "temperature": 0,
+                                    "max_tokens": 4096
+                                },
+                                region_name=region
+                            )
+                            logger.info(f"대체 LLM 모델 초기화 완료: {fallback_model}")
+                            break
+                        except Exception as fallback_e:
+                            logger.error(f"대체 LLM 모델 {fallback_model} 초기화 실패: {str(fallback_e)}")
+                    else:
+                        # 모든 대체 모델이 실패한 경우
+                        logger.error(f"LLM 모델 ID가 유효하지 않습니다. 모든 대체 모델이 실패했습니다: {error_msg}")
+                        raise ValueError(f"LLM 모델 ID가 유효하지 않습니다. AWS Bedrock의 최신 모델 ID로 업데이트가 필요합니다: {error_msg}")
                 else:
                     logger.error(f"LLM 모델 초기화 중 오류 발생: {error_msg}", exc_info=True)
                     raise
