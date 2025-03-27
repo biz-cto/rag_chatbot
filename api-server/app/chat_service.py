@@ -108,7 +108,7 @@ class ChatService:
             if source_parts:
                 source_display = " | ".join(source_parts)
             
-            # 내용 처리
+            # 내용 처리 - 원본 문장 그대로 표시
             if content:
                 # 줄 단위로 분리하고 빈 줄 제거
                 lines = [line.strip() for line in content.split('\n') if line.strip()]
@@ -124,7 +124,7 @@ class ChatService:
                         lines[-1]
                     ]
                 
-                # 각 줄 앞에 줄 번호 추가
+                # 각 줄 앞에 줄 번호 추가 (원본 문장 유지)
                 content_lines = [f"[줄 {i+1}] {line}" for i, line in enumerate(content_lines)]
             
         except Exception as e:
@@ -447,7 +447,8 @@ JSON 문법을 정확히 준수하고, 답변은 "answer" 필드에 직접 작�
 주어진 컨텍스트 정보만 사용하여 사용자 질문에 답변하세요.
 컨텍스트에 없는 내용은 '이 정보는 제공된 문서에 포함되어 있지 않습니다'라고 답하세요.
 반드시 관련 문서 출처 정보(파일명, 페이지, 줄 번호)를 포함해 주세요.
-답변에 사용한 구체적인 문장이나 내용을 정확한 줄 번호와 함께 명확히 표시하세요.
+답변에 사용한 구체적인 문장이나 내용은 원본 그대로 표시하고, 정확한 줄 번호와 함께 명시해 주세요.
+문장을 요약하거나 수정하지 마세요.
 
 컨텍스트:
 {context}
