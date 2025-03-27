@@ -64,11 +64,10 @@ class RagService:
             # 임베딩 및 벡터 저장소 생성
             logger.info("임베딩 모델 초기화 중")
             try:
+                # AWS SDK는 환경 변수에서 자격증명을 자동으로 가져오므로 직접 전달할 필요가 없음
                 embeddings = BedrockEmbeddings(
                     model_id="amazon.titan-embed-text-v1",
-                    region_name=region,
-                    aws_access_key_id=aws_access_key,
-                    aws_secret_access_key=aws_secret_key
+                    region_name=region
                 )
                 logger.info("임베딩 모델 초기화 완료")
             except Exception as e:
@@ -82,15 +81,14 @@ class RagService:
             # 대화형 검색 체인 생성
             logger.info("LLM 모델 초기화 중")
             try:
+                # AWS SDK는 환경 변수에서 자격증명을 자동으로 가져오므로 직접 전달할 필요가 없음
                 llm = ChatBedrock(
                     model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
                     model_kwargs={
                         "temperature": 0,
                         "max_tokens": 4096
                     },
-                    region_name=region,
-                    aws_access_key_id=aws_access_key,
-                    aws_secret_access_key=aws_secret_key
+                    region_name=region
                 )
                 logger.info("LLM 모델 초기화 완료")
             except Exception as e:
