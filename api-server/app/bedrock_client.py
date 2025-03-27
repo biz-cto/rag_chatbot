@@ -195,8 +195,9 @@ class BedrockClient:
                     time.sleep(wait_time)
                     retry_attempt += 1
                 else:
-                    break
-        
+                    break        
+                
+
         # 모든 재시도 실패 시 폴백 응답
         logger.error("최대 재시도 횟수를 초과하여 기본 응답 반환")
         if len(conversation_history) > 0 and 'content' in conversation_history[-1]:
