@@ -38,17 +38,17 @@ class BedrockClient:
         
         # 모드에 따라 모델 선택
         if smart_mode:
-            # 스마트 모드 - Claude 3 Sonnet 사용
-            self.model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
-            self.max_tokens = 4096
-            logger.info("스마트 모드 활성화: Claude 3 Sonnet 모델 사용")
+            # 스마트 모드 - Claude 3 Haiku로 변경 (Sonnet보다 빠름)
+            self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+            self.max_tokens = 2048
+            logger.info("스마트 모드 활성화: Claude 3 Haiku 모델 사용 (빠른 응답)")
         elif fast_mode:
             # 빠른 응답 모드 - Claude Instant 사용
             self.model_id = "anthropic.claude-instant-v1"
             self.max_tokens = 1024
             logger.info("빠른 응답 모드 활성화: Claude Instant 모델 사용")
         else:
-            # 기본 모드 - Claude 3 Haiku (빠르지만 더 스마트)
+            # 기본 모드 - Claude 3 Haiku
             self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"
             self.max_tokens = 2048
             logger.info("기본 모드 활성화: Claude 3 Haiku 모델 사용")
@@ -182,15 +182,37 @@ class BedrockClient:
                 # JSON 응답 형식 처리 (필요시)
                 if is_json_response and "\"sources\":" in llm_response:
                     try:
-                        logger.info("JSON 응답 포맷 처리 시작")
-                        # JSON 응답 파싱 시도
+                        # 로깅 최소화 (응답 시간 단축)
+                        logger.info("JSON 응답 포맷 처리")
+                        
+                        # JSON 응답 파싱 시도 - 이중 JSON 문제 해결
+                        if llm_response.strip().startswith("{") and "\"answer\": \"{" in llm_response:
+                            # 중첩된 JSON 감지 (JSON 안에 이스케이프된 JSON이 있는 경우)
+                            try:
+                                outer_json = json.loads(llm_response)
+                                if "answer" in outer_json and isinstance(outer_json["answer"], str):
+                                    # 내부 JSON 추출 시도
+                                    inner_str = outer_json["answer"]
+                                    if inner_str.strip().startswith("{") and inner_str.strip().endswith("}"):
+                                        try:
+                                            inner_json = json.loads(inner_str)
+                                            if "answer" in inner_json and "sources" in inner_json:
+                                                # 내부 JSON이 올바른 형식을 가지고 있으면 이를 사용
+                                                llm_response = inner_str
+                                                logger.info("중첩된 JSON 구조 감지 및 정상화 완료")
+                                        except:
+                                            # 내부 JSON 파싱 실패시 원본 사용
+                                            pass
+                            except:
+                                # 외부 JSON 파싱 실패시 계속 진행
+                                pass
+
+                        # 정상적인 JSON 처리 진행
                         response_json = json.loads(llm_response)
                         
                         # sources 키 형식 변경
                         if "sources" in response_json and isinstance(response_json["sources"], list):
-                            # sources 형식 개선: PDF 페이지 대신 문맥 사용
-                            logger.info(f"원본 sources 정보: {json.dumps(response_json['sources'][:2], ensure_ascii=False)}")
-                            
+                            # 최소한의 로깅만 유지
                             for source in response_json["sources"]:
                                 if "page" in source:
                                     # page 키를 contents로 변경
@@ -200,9 +222,7 @@ class BedrockClient:
                             
                             # 개선된 JSON 응답으로 변환
                             llm_response = json.dumps(response_json, ensure_ascii=False)
-                            logger.info(f"변환된 JSON 응답 포맷: {llm_response[:200]}...")
-                        else:
-                            logger.info("JSON 응답에 sources 정보가 없거나 형식이 다릅니다")
+                        
                     except json.JSONDecodeError:
                         logger.warning("JSON 응답 포맷 처리 실패: 유효하지 않은 JSON 형식")
                     except Exception as json_error:

@@ -214,8 +214,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'body': json.dumps(response, ensure_ascii=False)
                     }
                     
-                    # CloudWatch에 전체 응답 JSON 로깅 
-                    logger.info(f"사용자 응답 JSON: {json.dumps(response, ensure_ascii=False)}")
+                    # 최소한의 로깅만 유지 (응답 시간 단축)
+                    if 'answer' in response:
+                        answer_preview = response['answer'][:50] + "..." if len(response['answer']) > 50 else response['answer']
+                        logger.info(f"응답 생성 완료: {answer_preview}")
                     
                     return final_response
                 except Exception as e:

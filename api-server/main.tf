@@ -241,16 +241,16 @@ resource "aws_lambda_function" "rag_chatbot" {
   runtime          = var.lambda_runtime
   filename         = data.archive_file.lambda_package.output_path
   source_code_hash = data.archive_file.lambda_package.output_base64sha256
-  timeout          = var.lambda_timeout
-  memory_size      = var.lambda_memory_size
+  timeout          = 30  # 시간 초과 값 축소 (불필요한 대기 시간 감소)
+  memory_size      = 1024  # 메모리 최적화 (충분한 성능 + 비용 효율성)
 
   environment {
     variables = {
       CUSTOM_AWS_REGION = var.aws_region
       S3_BUCKET_NAME    = var.s3_bucket_name
       BATCH_SIZE        = "20"  # 임베딩 처리 속도 향상
-      FAST_MODE         = "false"  # 스마트 모드로 변경
-      SMART_MODE        = "true"   # 더 똑똑한 모델 활성화
+      FAST_MODE         = "true"  # 빠른 모드 활성화
+      SMART_MODE        = "false"  # 스마트 모드 비활성화 (응답속도 향상)
     }
   }
 

@@ -123,36 +123,47 @@ class ChatService:
             response = self._generate_response(user_message, context, session_id)
             
             # JSON 응답 처리
-            if response.strip().startswith("{") and response.strip().endswith("}"):
+            if response.strip().startswith("{"):
                 try:
-                    logger.info("JSON 형식 응답 처리 시작")
-                    # JSON 파싱 시도
-                    json_response = json.loads(response)
+                    # 중첩된 JSON 문제 처리
+                    current_response = response
+                    if "\"answer\": \"{" in response:
+                        try:
+                            # 외부 JSON 파싱
+                            outer_json = json.loads(response)
+                            if "answer" in outer_json and isinstance(outer_json["answer"], str):
+                                inner_str = outer_json["answer"]
+                                # 내부 JSON이 유효한지 확인
+                                if inner_str.strip().startswith("{") and inner_str.strip().endswith("}"):
+                                    try:
+                                        inner_json = json.loads(inner_str)
+                                        if "answer" in inner_json:
+                                            # 내부 JSON 사용
+                                            current_response = inner_str
+                                    except:
+                                        # 내부 JSON 파싱 실패시 원본 유지
+                                        pass
+                        except:
+                            # 외부 JSON 파싱 실패시 원본 유지
+                            pass
+                    
+                    # 최종 JSON 파싱
+                    json_response = json.loads(current_response)
                     
                     # 응답 형식 확인
                     if "answer" in json_response:
-                        logger.info("'answer' 키가 있는 JSON 응답 감지")
-                        # JSON 응답에서 텍스트만 추출하여 대화 기록에 추가
+                        # 대화 기록에 추가
                         self.conversations[session_id].append({
                             "role": "assistant",
                             "content": json_response["answer"]
                         })
                         
-                        # 소스 정보 로깅
-                        if "sources" in json_response:
-                            sources_count = len(json_response["sources"])
-                            logger.info(f"JSON 응답에 포함된 소스 정보: {sources_count}개")
-                            if sources_count > 0:
-                                sample_source = json_response["sources"][0]["source"] if "source" in json_response["sources"][0] else "형식 오류"
-                                logger.info(f"첫 번째 소스: {sample_source}")
-                        
                         # 원본 JSON 응답 반환
-                        logger.info(f"JSON 응답 구조: {', '.join(json_response.keys())}")
                         return json_response
                 except json.JSONDecodeError:
-                    logger.warning("JSON 파싱 실패, 일반 텍스트로 처리합니다")
+                    logger.warning("JSON 파싱 실패, 일반 텍스트로 처리")
                 except Exception as json_error:
-                    logger.error(f"JSON 응답 처리 중 오류: {str(json_error)}")
+                    logger.error(f"JSON 응답 처리 오류: {str(json_error)}")
             else:
                 logger.info("일반 텍스트 응답 처리")
             
@@ -224,32 +235,19 @@ class ChatService:
             except Exception as e:
                 logger.error(f"문서 원본 정보 추출 중 오류: {str(e)}")
         
-        # JSON 응답 형식 지시사항 추가
+        # JSON 응답 형식 지시사항 추가 - 간소화하여 모델이 쉽게 따르도록 함
         json_format_instruction = """
-응답을 다음 JSON 형식으로 제공하세요:
+다음 형식으로 JSON 응답을 제공하세요:
 {
-  "answer": "사용자 질문에 대한 응답",
-  "sources": [
-    {
-      "source": "출처 파일명",
-      "contents": ["관련 내용 텍스트", ...]
-    },
-    ...
-  ]
+  "answer": "답변 내용",
+  "sources": [{"source": "출처명", "contents": ["내용"]}]
 }
-모든 답변은 반드시 한국어로 작성하세요.
 """
         
-        # 보다 지능적인 응답을 위한 프롬프트 개선
-        system_prompt = f"""당신은 정확하고 전문적인 지식을 갖춘 AI 어시스턴트입니다.
-사용자의 질문에 대해 아래 제공된 컨텍스트를 기반으로 정확하고 상세한 답변을 제공하세요.
-
-답변 작성 가이드라인:
-1. 컨텍스트에 명시된 정보만 사용하여 응답하세요.
-2. 컨텍스트에 없는 정보는 추측하지 마세요.
-3. 정확한 사실과 관련 세부 정보를 제공하세요.
-4. 단락을 나누고 필요시 번호 매김을 사용하여 구조화된 응답을 제공하세요.
-5. 컨텍스트에 관련 정보가 없는 경우, "이 정보는 제공된 문서에 포함되어 있지 않습니다."라고 명확히 답변하세요.
+        # 프롬프트 간소화하여 처리 속도 향상
+        system_prompt = f"""당신은 문서 기반 질의응답 AI입니다.
+주어진 컨텍스트 정보만 사용하여 사용자 질문에 답변하세요.
+컨텍스트에 없는 내용은 '이 정보는 제공된 문서에 포함되어 있지 않습니다'라고 답하세요.
 
 컨텍스트:
 {context}
