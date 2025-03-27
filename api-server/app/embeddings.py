@@ -1,6 +1,7 @@
 import json
 import logging
 import boto3
+import botocore.config
 import time
 import random
 import os
@@ -55,7 +56,7 @@ class EmbeddingService:
         """
         try:
             # 재시도 구성을 통한 Bedrock 클라이언트 생성
-            config = boto3.config.Config(
+            config = botocore.config.Config(
                 retries={
                     'max_attempts': 3,
                     'mode': 'adaptive'
