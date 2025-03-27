@@ -79,6 +79,64 @@ class ChatService:
         if not hasattr(self, 'llm') or self.llm.bedrock_runtime is None:
             logger.warning("BedrockClient가 정상적으로 초기화되지 않았습니다. LLM 응답 생성 기능이 제한됩니다.")
     
+    def _extract_detailed_source_info(self, doc):
+        """
+        문서에서 자세한 출처 정보와 내용 추출
+        
+        Parameters:
+        - doc: 문서 딕셔너리
+        
+        Returns:
+        - source_display: 출처 표시 문자열
+        - content_lines: 내용 줄 목록
+        """
+        # 기본값 초기화
+        source_display = "문서"
+        content_lines = []
+        
+        # 출처 정보 구성
+        if 'source' in doc:
+            source_display = doc['source']
+            
+            # 파일 정보 추출
+            if 'file' in doc:
+                file_name = doc['file'].split("/")[-1] if "/" in doc['file'] else doc['file']
+                source_display = f"PDF 파일: {file_name}"
+                
+                # 페이지 정보 추가
+                if 'page' in doc:
+                    page_num = doc['page']
+                    source_display += f" (페이지: {page_num}"
+                    
+                    # 내용에서 줄 번호 추정
+                    if 'content' in doc:
+                        line_count = len(doc['content'].split('\n'))
+                        source_display += f", 줄: 1-{line_count})"
+                    else:
+                        source_display += ")"
+        
+        # 내용에서 주요 줄 추출
+        if 'content' in doc:
+            content = doc['content']
+            lines = content.split('\n')
+            
+            # 짧은 내용은 전부 표시
+            if len(lines) <= 3:
+                for i, line in enumerate(lines):
+                    if line.strip():  # 빈 줄은 제외
+                        content_lines.append(f"[줄 {i+1}] {line.strip()}")
+            else:
+                # 첫 줄과 마지막 줄만 표시
+                if lines[0].strip():
+                    content_lines.append(f"[줄 1] {lines[0].strip()}")
+                if len(lines) > 1 and lines[-1].strip():
+                    content_lines.append(f"[줄 {len(lines)}] {lines[-1].strip()}")
+                # 중간에 생략 표시
+                if len(lines) > 3:
+                    content_lines.append(f"... 중략 (총 {len(lines)}줄) ...")
+        
+        return source_display, content_lines or ["관련 문서 내용"]
+    
     def process_message(self, user_message: str, session_id: str) -> Dict[str, Any]:
         """
         사용자 메시지 처리 및 응답 생성
@@ -244,23 +302,13 @@ class ChatService:
             # 소스 정보가 없지만 컨텍스트가 있는 경우 기본 정보 추가
             if not default_sources and context:
                 # 관련 문서에서 일부 정보라도 추출
-                sample_content = []
                 if relevant_docs and len(relevant_docs) > 0:
                     first_doc = relevant_docs[0]
-                    if 'source' in first_doc:
-                        source_name = first_doc['source']
-                        source_display = source_name
-                        # 파일 정보 추출
-                        if 'file' in first_doc:
-                            file_name = first_doc['file'].split("/")[-1] if "/" in first_doc['file'] else first_doc['file']
-                            source_display = f"PDF 파일: {file_name}"
-                            if 'page' in first_doc:
-                                source_display += f" (페이지: {first_doc['page']})"
-                        
-                        default_sources.append({
-                            "source": source_display,
-                            "contents": sample_content or ["관련 문서 내용"]
-                        })
+                    source_display, sample_content = self._extract_detailed_source_info(first_doc)
+                    default_sources.append({
+                        "source": source_display,
+                        "contents": sample_content
+                    })
             
             response_data = {
                 "answer": response,
@@ -315,23 +363,13 @@ class ChatService:
             # 소스 정보가 없지만 컨텍스트가 있는 경우 기본 정보 추가
             if not default_sources and context:
                 # 관련 문서에서 일부 정보라도 추출
-                sample_content = []
                 if relevant_docs and len(relevant_docs) > 0:
                     first_doc = relevant_docs[0]
-                    if 'source' in first_doc:
-                        source_name = first_doc['source']
-                        source_display = source_name
-                        # 파일 정보 추출
-                        if 'file' in first_doc:
-                            file_name = first_doc['file'].split("/")[-1] if "/" in first_doc['file'] else first_doc['file']
-                            source_display = f"PDF 파일: {file_name}"
-                            if 'page' in first_doc:
-                                source_display += f" (페이지: {first_doc['page']})"
-                        
-                        default_sources.append({
-                            "source": source_display,
-                            "contents": sample_content or ["관련 문서 내용"]
-                        })
+                    source_display, sample_content = self._extract_detailed_source_info(first_doc)
+                    default_sources.append({
+                        "source": source_display,
+                        "contents": sample_content
+                    })
             
             # 비용 추적 완료 및 로깅
             self.cost_tracker.stop()
@@ -372,34 +410,11 @@ class ChatService:
             try:
                 # 검색된 문서의 원본 정보 추출
                 for doc in self.retriever.retrieve(user_message):
-                    if 'source' in doc:
-                        # PDF 파일명과 페이지 정보 추출
-                        source_display = doc['source']
-                        # PDF 파일명만 깔끔하게 추출 (경로 제거)
-                        if "file" in doc:
-                            file_name = doc["file"].split("/")[-1] if "/" in doc["file"] else doc["file"]
-                            source_display = f"PDF 파일: {file_name}"
-                            if "page" in doc:
-                                source_display += f" (페이지: {doc['page']})"
-                        
-                        source_info = {
-                            'source': source_display,
-                            'contents': []
-                        }
-                        if 'content' in doc:
-                            # 내용을 더 명확하게 표시 (너무 길지 않게, 핵심 내용 중심으로)
-                            content = doc['content']
-                            
-                            # 긴 내용은 중요 문장 위주로 추출 (마침표 기준으로 분리)
-                            sentences = content.split('. ')
-                            if len(sentences) > 3:
-                                # 앞부분 2문장과 뒷부분 1문장 포함
-                                content_preview = '. '.join(sentences[:2]) + '. ... ' + sentences[-1]
-                            else:
-                                content_preview = content[:300] + "..." if len(content) > 300 else content
-                                
-                            source_info['contents'].append(content_preview)
-                        doc_sources.append(source_info)
+                    source_display, content_lines = self._extract_detailed_source_info(doc)
+                    doc_sources.append({
+                        'source': source_display,
+                        'contents': content_lines
+                    })
             except Exception as e:
                 logger.error(f"문서 원본 정보 추출 중 오류: {str(e)}")
                 # 기본 소스 정보라도 추가
@@ -423,8 +438,8 @@ class ChatService:
   "answer": "답변 내용을 여기에 작성",
   "sources": [
     {
-      "source": "출처명 (파일명, 페이지 등)",
-      "contents": ["참고한 내용/문장"]
+      "source": "PDF파일명 (페이지: 번호, 줄: 범위)",
+      "contents": ["[줄 번호] 참고한 구체적인 내용"]
     }
   ]
 }
@@ -435,8 +450,8 @@ JSON 문법을 정확히 준수하고, 답변은 "answer" 필드에 직접 작�
         system_prompt = f"""당신은 문서 기반 질의응답 AI입니다.
 주어진 컨텍스트 정보만 사용하여 사용자 질문에 답변하세요.
 컨텍스트에 없는 내용은 '이 정보는 제공된 문서에 포함되어 있지 않습니다'라고 답하세요.
-반드시 관련 문서 출처 정보를 포함해 주세요.
-답변에 사용한 구체적인 문장이나 내용을 출처와 함께 명확히 표시하세요.
+반드시 관련 문서 출처 정보(파일명, 페이지, 줄 번호)를 포함해 주세요.
+답변에 사용한 구체적인 문장이나 내용을 정확한 줄 번호와 함께 명확히 표시하세요.
 
 컨텍스트:
 {context}
