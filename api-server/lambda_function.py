@@ -172,8 +172,40 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     response = chat_service.process_message(user_message, session_id)
                     
                     # 응답에 session_id 추가
-                    if isinstance(response, dict) and 'session_id' not in response:
-                        response['session_id'] = session_id
+                    if isinstance(response, dict):
+                        if 'session_id' not in response:
+                            response['session_id'] = session_id
+                        
+                        # 응답 포맷 처리: JSON 형식 지원 (answer/sources 키)
+                        if 'answer' in response and 'response' not in response:
+                            # 이미 원하는 JSON 형식이므로 그대로 사용
+                            pass
+                        elif 'response' in response and 'answer' not in response:
+                            # 기존 형식을 새 형식으로 변환
+                            sources = response.get('sources', [])
+                            formatted_sources = []
+                            
+                            # 소스 포맷 변환
+                            for source in sources:
+                                if isinstance(source, str):
+                                    formatted_sources.append({
+                                        'source': source,
+                                        'contents': []
+                                    })
+                                elif isinstance(source, dict) and 'source' in source:
+                                    # 이미 올바른 형식
+                                    formatted_sources.append(source)
+                            
+                            # 새 응답 객체 생성
+                            response = {
+                                'answer': response['response'],
+                                'sources': formatted_sources,
+                                'session_id': response.get('session_id', session_id)
+                            }
+                            
+                            # 오류가 있었다면 포함
+                            if 'error' in response:
+                                response['error'] = response['error']
                     
                     return {
                         'statusCode': 200,

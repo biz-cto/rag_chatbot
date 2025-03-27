@@ -122,12 +122,34 @@ class ChatService:
             # 프롬프트 구성 및 응답 생성
             response = self._generate_response(user_message, context, session_id)
             
-            # 어시스턴트 응답 추가
+            # JSON 응답 처리
+            if response.strip().startswith("{") and response.strip().endswith("}"):
+                try:
+                    # JSON 파싱 시도
+                    json_response = json.loads(response)
+                    
+                    # 응답 형식 확인
+                    if "answer" in json_response:
+                        # JSON 응답에서 텍스트만 추출하여 대화 기록에 추가
+                        self.conversations[session_id].append({
+                            "role": "assistant",
+                            "content": json_response["answer"]
+                        })
+                        
+                        # 원본 JSON 응답 반환
+                        return json_response
+                except json.JSONDecodeError:
+                    logger.warning("JSON 파싱 실패, 일반 텍스트로 처리합니다")
+                except Exception as json_error:
+                    logger.error(f"JSON 응답 처리 중 오류: {str(json_error)}")
+            
+            # 일반 텍스트 응답 처리 (JSON 파싱 실패 시)
             self.conversations[session_id].append({
                 "role": "assistant",
                 "content": response
             })
             
+            # 기존 형식으로 응답 변환
             return {
                 "response": response,
                 "sources": list(set(sources))
@@ -175,6 +197,36 @@ class ChatService:
         # 빠른 응답을 위해 대화 기록 제한 (최근 5개만 사용)
         conversation_history = self.conversations[session_id][-5:]
         
+        # 원본 문서 정보 및 출처 가져오기
+        doc_sources = []
+        if context:
+            try:
+                # 검색된 문서의 원본 정보 추출
+                for doc in self.retriever.retrieve(user_message):
+                    if 'source' in doc and 'content' in doc:
+                        doc_sources.append({
+                            'source': doc['source'],
+                            'contents': [doc['content']]
+                        })
+            except Exception as e:
+                logger.error(f"문서 원본 정보 추출 중 오류: {str(e)}")
+        
+        # JSON 응답 형식 지시사항 추가
+        json_format_instruction = """
+응답을 다음 JSON 형식으로 제공하세요:
+{
+  "answer": "사용자 질문에 대한 응답",
+  "sources": [
+    {
+      "source": "출처 파일명",
+      "contents": ["관련 내용 텍스트", ...]
+    },
+    ...
+  ]
+}
+모든 답변은 반드시 한국어로 작성하세요.
+"""
+        
         # 빠른 응답을 위해 프롬프트 간소화
         system_prompt = f"""당신은 도움이 되는 AI 어시스턴트입니다. 
 아래 제공된 컨텍스트를 기반으로 사용자 질문에 간결하게 답변하세요.
@@ -183,7 +235,13 @@ class ChatService:
 
 컨텍스트:
 {context}
+
+{json_format_instruction}
 """
+        
+        # 문서 소스 정보 로그 추가
+        if doc_sources:
+            logger.info(f"응답 생성에 사용 가능한 문서 소스: {len(doc_sources)}개")
         
         # LLM에 요청 보내기
         try:
@@ -191,6 +249,22 @@ class ChatService:
                 system_prompt=system_prompt,
                 conversation_history=conversation_history
             )
+            
+            # JSON 응답인지 확인
+            if response.strip().startswith("{") and response.strip().endswith("}"):
+                try:
+                    # 유효한 JSON 확인
+                    json_response = json.loads(response)
+                    
+                    # JSON 응답에 문서 소스 정보가 없으면 추가
+                    if "sources" not in json_response and doc_sources:
+                        json_response["sources"] = doc_sources
+                        response = json.dumps(json_response, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    logger.warning("LLM의 응답이 유효한 JSON 형식이 아닙니다")
+                except Exception as json_error:
+                    logger.error(f"JSON 응답 처리 중 오류: {str(json_error)}")
+            
             return response
         except Exception as e:
             logger.error(f"LLM 응답 생성 중 오류: {str(e)}")

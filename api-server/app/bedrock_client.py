@@ -127,6 +127,9 @@ class BedrockClient:
         # 요청 내용 로그
         logger.info(f"응답 생성 요청 - 대화 길이: {len(conversation_history)}, 시스템 프롬프트 길이: {len(system_prompt)}")
         
+        # 시스템 프롬프트에서 JSON 응답 포맷 요청이 있는지 확인
+        is_json_response = "json" in system_prompt.lower() or "응답 json 포맷" in system_prompt.lower()
+        
         # 기본 모델로 시도
         use_model_id = self.model_id
         retry_attempt = 0
@@ -155,6 +158,29 @@ class BedrockClient:
                 # 응답 처리
                 response_body = json.loads(response['body'].read().decode('utf-8'))
                 llm_response = response_body.get('content', [{'text': '응답을 생성할 수 없습니다.'}])[0]['text']
+                
+                # JSON 응답 형식 처리 (필요시)
+                if is_json_response and "\"sources\":" in llm_response:
+                    try:
+                        # JSON 응답 파싱 시도
+                        response_json = json.loads(llm_response)
+                        
+                        # sources 키 형식 변경
+                        if "sources" in response_json and isinstance(response_json["sources"], list):
+                            # sources 형식 개선: PDF 페이지 대신 문맥 사용
+                            for source in response_json["sources"]:
+                                if "page" in source:
+                                    # page 키를 contents로 변경
+                                    contents = source.pop("page", None)
+                                    if contents:
+                                        source["contents"] = [contents]
+                            
+                            # 개선된 JSON 응답으로 변환
+                            llm_response = json.dumps(response_json, ensure_ascii=False)
+                    except json.JSONDecodeError:
+                        logger.warning("JSON 응답 포맷 처리 실패: 유효하지 않은 JSON 형식")
+                    except Exception as json_error:
+                        logger.warning(f"JSON 응답 포맷 처리 중 오류: {str(json_error)}")
                 
                 logger.info(f"LLM 응답 생성 완료 - 모델: {use_model_id}, 응답 길이: {len(llm_response)} 글자")
                 return llm_response
