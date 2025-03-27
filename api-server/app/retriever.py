@@ -1,6 +1,8 @@
 import logging
 import time
-from typing import List, Dict, Any, Optional
+import traceback
+from typing import List, Dict, Any, Optional, Tuple
+import numpy as np
 from .document_store import DocumentStore
 from .embeddings import EmbeddingService
 
@@ -158,3 +160,41 @@ class Retriever:
                 logger.error(f"폴백 검색 중 오류 발생: {str(fallback_error)}")
                 
             return [] 
+    
+    def retrieve_with_usage(self, query: str, top_k: int = 3) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """
+        쿼리 관련 문서를 검색하고 토큰 사용량을 반환합니다.
+        
+        Parameters:
+        - query: 검색 쿼리
+        - top_k: 반환할 최대 문서 수
+        
+        Returns:
+        - 관련 문서 목록 (제목, 내용, 점수), 토큰 사용량
+        """
+        # 빈 쿼리 체크
+        if not query or query.strip() == "":
+            logger.warning("빈 쿼리로 검색 시도됨")
+            return [], {"input_tokens": 0, "model_id": ""}
+        
+        logger.info(f"쿼리에 대한 관련 문서 검색 (토큰 사용량 추적): '{query[:30]}...'")
+        
+        try:
+            # 쿼리 임베딩 생성 (토큰 사용량 포함)
+            query_embeddings, token_usage = self.embedding_service.get_embeddings([query])
+            
+            if not query_embeddings:
+                logger.warning("쿼리 임베딩 생성 실패")
+                return [], token_usage
+                
+            query_embedding = query_embeddings[0]
+            
+            # 벡터 검색 수행
+            matched_documents = self._vector_search(query_embedding, top_k)
+            
+            logger.info(f"검색 결과: {len(matched_documents)}개 문서 찾음, 토큰 사용량: {token_usage}")
+            return matched_documents, token_usage
+        except Exception as e:
+            logger.error(f"문서 검색 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
+            return [], {"input_tokens": 0, "model_id": ""} 

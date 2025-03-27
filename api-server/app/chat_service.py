@@ -3,11 +3,12 @@ import logging
 import boto3
 import os
 import traceback
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from .embeddings import EmbeddingService
 from .document_store import DocumentStore
 from .retriever import Retriever
 from .bedrock_client import BedrockClient
+from .utils.cost_tracker import CostTracker
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -30,6 +31,13 @@ class ChatService:
         # Bedrock은 무조건 us-east-1 리전 사용
         self.aws_region = "us-east-1"
         self.conversations: Dict[str, List[Dict[str, str]]] = {}
+        self.cost_tracker = CostTracker()
+        
+        # Lambda 메모리 가져오기
+        try:
+            self.lambda_memory_mb = int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "1024"))
+        except (ValueError, TypeError):
+            self.lambda_memory_mb = 1024
         
         # 단계적으로 서비스 컴포넌트 초기화
         logger.info(f"ChatService 초기화 시작 - 버킷: {s3_bucket_name}, 리전: {self.aws_region}")
@@ -82,11 +90,17 @@ class ChatService:
         Returns:
         - 응답 내용
         """
+        # 비용 추적 시작
+        self.cost_tracker.start(self.lambda_memory_mb)
+        
         logger.info(f"사용자 메시지 처리 - 세션: {session_id}")
         
         # 메시지 유효성 검사
         if not user_message or not user_message.strip():
             logger.warning(f"세션 {session_id}에서 빈 메시지 수신")
+            # 비용 추적 완료 및 로깅
+            self.cost_tracker.stop()
+            self.cost_tracker.log_costs(request_id=session_id, request_type="chat_empty")
             return {
                 "response": "메시지가 비어 있습니다. 질문을 입력해 주세요.",
                 "sources": []
@@ -105,22 +119,44 @@ class ChatService:
         try:
             # 관련 문서 검색 시도
             relevant_docs = []
+            embedding_token_usage = {"input_tokens": 0, "model_id": ""}
             try:
                 if hasattr(self, 'retriever'):
-                    relevant_docs = self.retriever.retrieve(user_message)
+                    relevant_docs, retrieval_token_usage = self.retriever.retrieve_with_usage(user_message)
+                    # 임베딩 토큰 사용량 추적
+                    embedding_token_usage = retrieval_token_usage
+                    if embedding_token_usage["model_id"]:
+                        self.cost_tracker.add_bedrock_cost(
+                            embedding_token_usage["model_id"],
+                            embedding_token_usage["input_tokens"],
+                            0  # 임베딩은 출력 토큰 없음
+                        )
             except Exception as retriever_error:
                 logger.error(f"문서 검색 중 오류: {str(retriever_error)}")
             
             # 검색 결과 확인
             if not relevant_docs:
                 logger.warning(f"쿼리 '{user_message[:30]}...'에 대한 관련 문서를 찾지 못했습니다.")
+            else:
+                # S3 비용 추적 (PDF 접근)
+                s3_requests = 1 if relevant_docs else 0
+                s3_data_size = sum(len(doc.get('content', '')) for doc in relevant_docs) / 1024  # KB 단위
+                self.cost_tracker.add_s3_cost(get_requests=s3_requests, data_size_kb=s3_data_size)
             
             # 컨텍스트 구성
             context = "\n\n".join([doc['content'] for doc in relevant_docs]) if relevant_docs else ""
             sources = [doc['source'] for doc in relevant_docs] if relevant_docs else []
             
             # 프롬프트 구성 및 응답 생성
-            response = self._generate_response(user_message, context, session_id)
+            response, llm_token_usage = self._generate_response(user_message, context, session_id)
+            
+            # LLM 토큰 사용량 추적
+            if llm_token_usage["model_id"]:
+                self.cost_tracker.add_bedrock_cost(
+                    llm_token_usage["model_id"],
+                    llm_token_usage["input_tokens"],
+                    llm_token_usage["output_tokens"]
+                )
             
             # JSON 응답 처리
             if response.strip().startswith("{"):
@@ -159,7 +195,17 @@ class ChatService:
                         })
                         
                         # 원본 JSON 응답 반환
-                        return json_response
+                        response_data = json_response
+                        
+                        # 비용 추적 완료 및 로깅
+                        self.cost_tracker.stop()
+                        cost_info = self.cost_tracker.log_costs(request_id=session_id, request_type="chat_json")
+                        
+                        # 응답에 비용 정보 추가 (개발용)
+                        if os.environ.get("COST_DEBUG", "").lower() == "true":
+                            response_data["_debug_cost"] = cost_info
+                        
+                        return response_data
                 except json.JSONDecodeError:
                     logger.warning("JSON 파싱 실패, 일반 텍스트로 처리")
                 except Exception as json_error:
@@ -174,10 +220,20 @@ class ChatService:
             })
             
             # 기존 형식으로 응답 변환
-            return {
+            response_data = {
                 "response": response,
                 "sources": list(set(sources))
             }
+            
+            # 비용 추적 완료 및 로깅
+            self.cost_tracker.stop()
+            cost_info = self.cost_tracker.log_costs(request_id=session_id, request_type="chat_text")
+            
+            # 응답에 비용 정보 추가 (개발용)
+            if os.environ.get("COST_DEBUG", "").lower() == "true":
+                response_data["_debug_cost"] = cost_info
+            
+            return response_data
         except Exception as e:
             error_msg = f"메시지 처리 중 오류: {str(e)}"
             logger.error(error_msg)
@@ -192,13 +248,17 @@ class ChatService:
                 "content": fallback_response
             })
             
+            # 비용 추적 완료 및 로깅
+            self.cost_tracker.stop()
+            self.cost_tracker.log_costs(request_id=session_id, request_type="chat_error")
+            
             return {
                 "response": fallback_response,
                 "sources": [],
                 "error": str(e)
             }
     
-    def _generate_response(self, user_message: str, context: str, session_id: str) -> str:
+    def _generate_response(self, user_message: str, context: str, session_id: str) -> Tuple[str, Dict[str, Any]]:
         """
         LLM을 사용하여 응답 생성
         
@@ -208,15 +268,15 @@ class ChatService:
         - session_id: 세션 ID
         
         Returns:
-        - LLM 응답
+        - LLM 응답, 토큰 사용량 {input_tokens, output_tokens, model_id}
         """
         # LLM 클라이언트가 초기화되지 않은 경우
         if not hasattr(self, 'llm') or self.llm.bedrock_runtime is None:
             logger.warning("LLM 클라이언트가 초기화되지 않아 기본 응답 반환")
             if context:
-                return "이 질문에 관련된 정보를 찾았으나, 현재 AI 응답 생성에 문제가 있습니다. 잠시 후 다시 시도해 주세요."
+                return "이 질문에 관련된 정보를 찾았으나, 현재 AI 응답 생성에 문제가 있습니다. 잠시 후 다시 시도해 주세요.", {"input_tokens": 0, "output_tokens": 0, "model_id": ""}
             else:
-                return "죄송합니다. 현재 AI 응답 생성에 문제가 있습니다. 잠시 후 다시 시도해 주세요."
+                return "죄송합니다. 현재 AI 응답 생성에 문제가 있습니다. 잠시 후 다시 시도해 주세요.", {"input_tokens": 0, "output_tokens": 0, "model_id": ""}
                 
         # 빠른 응답을 위해 대화 기록 제한 (최근 5개만 사용)
         conversation_history = self.conversations[session_id][-5:]
@@ -235,13 +295,19 @@ class ChatService:
             except Exception as e:
                 logger.error(f"문서 원본 정보 추출 중 오류: {str(e)}")
         
-        # JSON 응답 형식 지시사항 추가 - 간소화하여 모델이 쉽게 따르도록 함
+        # JSON 응답 형식 지시사항 추가 - 중첩 JSON 문제 해결을 위한 명확한 지시
         json_format_instruction = """
-다음 형식으로 JSON 응답을 제공하세요:
+반드시 다음 형식으로만 JSON 응답을 제공하세요. 중첩된 JSON이나 이스케이프된 따옴표를 사용하지 마세요:
 {
-  "answer": "답변 내용",
-  "sources": [{"source": "출처명", "contents": ["내용"]}]
+  "answer": "답변 내용을 여기에 작성",
+  "sources": [
+    {
+      "source": "출처명",
+      "contents": ["참고한 내용"]
+    }
+  ]
 }
+JSON 문법을 정확히 준수하고, 답변은 "answer" 필드에 직접 작성하세요. 절대로 JSON 안에 또 다른 JSON을 포함시키지 마세요.
 """
         
         # 프롬프트 간소화하여 처리 속도 향상
@@ -261,7 +327,7 @@ class ChatService:
         
         # LLM에 요청 보내기
         try:
-            response = self.llm.generate_response(
+            response, token_usage = self.llm.generate_response(
                 system_prompt=system_prompt,
                 conversation_history=conversation_history
             )
@@ -286,13 +352,13 @@ class ChatService:
             else:
                 logger.info("응답이 JSON 형식이 아닙니다.")
             
-            return response
+            return response, token_usage
         except Exception as e:
             logger.error(f"LLM 응답 생성 중 오류: {str(e)}")
             if context:
-                return "관련 정보를 찾았으나 응답 생성 중 오류가 발생했습니다. 질문을 다시 작성해 주세요."
+                return "관련 정보를 찾았으나 응답 생성 중 오류가 발생했습니다. 질문을 다시 작성해 주세요.", {"input_tokens": 0, "output_tokens": 0, "model_id": ""}
             else:
-                return "죄송합니다. 응답 생성 중 오류가 발생했습니다. 다시 시도해 주세요."
+                return "죄송합니다. 응답 생성 중 오류가 발생했습니다. 다시 시도해 주세요.", {"input_tokens": 0, "output_tokens": 0, "model_id": ""}
     
     def reset_conversation(self, session_id: str) -> None:
         """
@@ -301,6 +367,13 @@ class ChatService:
         Parameters:
         - session_id: 초기화할 세션 ID
         """
+        # 비용 추적 시작
+        self.cost_tracker.start(self.lambda_memory_mb)
+        
         logger.info(f"대화 기록 초기화 - 세션: {session_id}")
         if session_id in self.conversations:
-            self.conversations[session_id] = [] 
+            self.conversations[session_id] = []
+        
+        # 비용 추적 완료 및 로깅
+        self.cost_tracker.stop()
+        self.cost_tracker.log_costs(request_id=session_id, request_type="reset") 

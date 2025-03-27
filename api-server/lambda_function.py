@@ -2,13 +2,18 @@ import json
 import logging
 import os
 import traceback
-from typing import Dict, Any
+import time
+from typing import Dict, Any, Optional
 
 from app.chat_service import ChatService
+from app.utils.cost_tracker import CostTracker
 
 # 로깅 설정
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+# 비용 추적 인스턴스
+_cost_tracker = CostTracker()
 
 # 환경 변수 검증 및 설정
 def validate_environment():
@@ -118,7 +123,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     - API Gateway 응답 객체
     """
     request_id = context.aws_request_id if context else "unknown"
-    logger.info(f"요청 ID: {request_id} - 이벤트: {json.dumps(event, default=str)[:1000]}")
+    logger.info(f"요청 ID: {request_id} - 이벤트: {json.dumps(event, default=str)[:500]}")
+    
+    # 비용 추적 초기화 및 시작
+    lambda_memory = int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "1024"))
+    _cost_tracker.start(lambda_memory_mb=lambda_memory)
     
     # API Gateway 프록시 통합에서의 HTTP 메서드와 경로 추출
     http_method = event.get('httpMethod', '')
@@ -133,6 +142,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     
     # OPTIONS 요청 처리 (CORS 프리플라이트)
     if http_method == 'OPTIONS':
+        # 비용 추적 완료 및 로깅
+        _cost_tracker.stop()
+        _cost_tracker.log_costs(request_id=request_id, request_type="options")
+        
         return {
             'statusCode': 200,
             'headers': cors_headers,
@@ -150,6 +163,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 body = json.loads(event.get('body', '{}')) if event.get('body') else {}
             except json.JSONDecodeError as e:
                 logger.error(f"JSON 파싱 오류: {str(e)}")
+                
+                # 비용 추적 완료 및 로깅
+                _cost_tracker.stop()
+                _cost_tracker.log_costs(request_id=request_id, request_type="json_error")
+                
                 return error_response('잘못된 JSON 형식입니다.', cors_headers)
             
             # 엔드포인트별 처리
@@ -160,6 +178,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 model_type = body.get('model_type', '')  # 'smart' 또는 'speed' 옵션
                 
                 if not user_message:
+                    # 비용 추적 완료 및 로깅
+                    _cost_tracker.stop()
+                    _cost_tracker.log_costs(request_id=request_id, request_type="empty_message")
+                    
                     return error_response('메시지가 제공되지 않았습니다.', cors_headers)
                 
                 if not session_id:
@@ -186,7 +208,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     # 채팅 응답 생성
                     response = chat_service.process_message(user_message, session_id)
                     
-                    # 모델 타입 정보 추가
+                    # 응답에 session_id 추가
                     if isinstance(response, dict):
                         if 'session_id' not in response:
                             response['session_id'] = session_id
@@ -195,10 +217,29 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             response['model_type'] = model_type
                         
                         # 응답 포맷 처리: JSON 형식 지원 (answer/sources 키)
-                        if 'answer' in response and 'response' not in response:
-                            # 이미 원하는 JSON 형식이므로 그대로 사용
-                            pass
-                        elif 'response' in response and 'answer' not in response:
+                        if 'answer' in response:
+                            # 중첩 JSON 처리: answer가 JSON 문자열인 경우
+                            answer_text = response['answer']
+                            if isinstance(answer_text, str) and answer_text.strip().startswith("{") and answer_text.strip().endswith("}"):
+                                try:
+                                    # 중첩 JSON 파싱 시도
+                                    inner_json = json.loads(answer_text)
+                                    
+                                    # 내부 JSON이 올바른 형식을 가지고 있으면 이를 사용
+                                    if isinstance(inner_json, dict) and "answer" in inner_json:
+                                        logger.info("중첩된 JSON 응답 감지 및 정상화")
+                                        
+                                        # 중첩 JSON의 answer로 대체
+                                        response['answer'] = inner_json.get('answer', '')
+                                        
+                                        # sources가 내부 JSON에만 있으면 이를 사용
+                                        if "sources" in inner_json and (not "sources" in response or not response["sources"]):
+                                            response['sources'] = inner_json.get('sources', [])
+                                except:
+                                    logger.warning("중첩 JSON 파싱 실패, 원본 유지")
+                        
+                        # 기존 포맷 변환 로직
+                        if 'response' in response and 'answer' not in response:
                             # 기존 형식을 새 형식으로 변환
                             sources = response.get('sources', [])
                             formatted_sources = []
@@ -237,6 +278,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         answer_preview = response['answer'][:50] + "..." if len(response['answer']) > 50 else response['answer']
                         logger.info(f"응답 생성 완료: {answer_preview}")
                     
+                    # Lambda 비용 추적 완료 및 로깅
+                    _cost_tracker.stop()
+                    _cost_tracker.add_s3_cost(get_requests=1)  # API Gateway 로그 저장용
+                    
+                    # ChatService에서 이미 자세한 비용 추적을 수행했으므로, 여기서는 Lambda/API Gateway 관련 비용만 로깅
+                    _cost_tracker.log_costs(request_id=request_id, request_type="chat_lambda")
+                    
                     return final_response
                 except Exception as e:
                     # 환경 변수 원래대로 복원
@@ -244,6 +292,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     os.environ["FAST_MODE"] = original_fast_mode
                     
                     logger.error(f"메시지 처리 중 오류: {str(e)}", exc_info=True)
+                    
+                    # 비용 추적 완료 및 로깅
+                    _cost_tracker.stop()
+                    _cost_tracker.log_costs(request_id=request_id, request_type="chat_error")
+                    
                     return error_response(f"메시지 처리 중 오류가 발생했습니다: {str(e)}", cors_headers, 500)
                 finally:
                     # 환경 변수 원래대로 복원
@@ -255,6 +308,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 session_id = body.get('session_id', '')
                 
                 if not session_id:
+                    # 비용 추적 완료 및 로깅
+                    _cost_tracker.stop()
+                    _cost_tracker.log_costs(request_id=request_id, request_type="reset_no_session")
+                    
                     return error_response('세션 ID가 제공되지 않았습니다.', cors_headers)
                 
                 try:
@@ -267,8 +324,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'session_id': session_id
                     }
                     
-                    # CloudWatch에 전체 응답 JSON 로깅
-                    logger.info(f"대화 초기화 응답 JSON: {json.dumps(reset_response, ensure_ascii=False)}")
+                    # 비용 추적 완료 및 로깅 - ChatService에서 이미 로깅했으므로 여기서는 Lambda 비용만 추가
+                    _cost_tracker.stop()
+                    _cost_tracker.log_costs(request_id=request_id, request_type="reset_lambda")
                     
                     return {
                         'statusCode': 200,
@@ -277,19 +335,37 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     }
                 except Exception as e:
                     logger.error(f"대화 초기화 중 오류: {str(e)}", exc_info=True)
+                    
+                    # 비용 추적 완료 및 로깅
+                    _cost_tracker.stop()
+                    _cost_tracker.log_costs(request_id=request_id, request_type="reset_error")
+                    
                     return error_response(f"대화 초기화 중 오류가 발생했습니다.", cors_headers, 500)
                 
             else:
                 # 알 수 없는 엔드포인트
+                # 비용 추적 완료 및 로깅
+                _cost_tracker.stop()
+                _cost_tracker.log_costs(request_id=request_id, request_type="unknown_endpoint")
+                
                 return error_response(f'알 수 없는 엔드포인트입니다: {path}', cors_headers, 404)
         
         # 지원되지 않는 HTTP 메서드
+        # 비용 추적 완료 및 로깅
+        _cost_tracker.stop()
+        _cost_tracker.log_costs(request_id=request_id, request_type="unsupported_method")
+        
         return error_response(f'지원되지 않는 HTTP 메서드입니다: {http_method}', cors_headers, 405)
         
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"요청 처리 중 오류 발생: {str(e)}")
         logger.error(error_trace)
+        
+        # 비용 추적 완료 및 로깅
+        _cost_tracker.stop()
+        _cost_tracker.log_costs(request_id=request_id, request_type="global_error")
+        
         return error_response(f"서버 오류가 발생했습니다.", cors_headers, 500)
 
 def error_response(message, headers, status_code=400):

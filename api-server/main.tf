@@ -251,6 +251,7 @@ resource "aws_lambda_function" "rag_chatbot" {
       BATCH_SIZE        = "20"  # 임베딩 처리 속도 향상
       FAST_MODE         = "true"  # 빠른 모드 활성화
       SMART_MODE        = "false"  # 스마트 모드 비활성화 (응답속도 향상)
+      COST_DEBUG        = var.environment == "dev" ? "true" : "false"  # 개발 환경에서만 비용 디버깅 활성화
     }
   }
 

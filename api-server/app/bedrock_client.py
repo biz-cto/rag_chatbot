@@ -5,7 +5,7 @@ import botocore.config
 import time
 import random
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from botocore.exceptions import ClientError, ConnectionError
 
 # 로깅 설정
@@ -124,7 +124,7 @@ class BedrockClient:
     
     def generate_response(self, system_prompt: str, 
                          conversation_history: List[Dict[str, str]],
-                         max_tokens: int = None) -> str:
+                         max_tokens: int = None) -> Tuple[str, Dict[str, int]]:
         """
         LLM을 사용하여 응답 생성
         
@@ -134,7 +134,7 @@ class BedrockClient:
         - max_tokens: 최대 토큰 수 (기본값 사용 시 None)
         
         Returns:
-        - LLM 응답
+        - LLM 응답과 토큰 사용량 {input_tokens, output_tokens}
         """
         # 환경 변수 변경 감지하여 모델 업데이트
         self._update_model_from_env()
@@ -144,7 +144,7 @@ class BedrockClient:
         # Bedrock 클라이언트가 없으면 기본 응답 반환
         if self.bedrock_runtime is None:
             logger.error("Bedrock 클라이언트가 초기화되지 않았습니다.")
-            return "죄송합니다. 현재 서비스에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요."
+            return "죄송합니다. 현재 서비스에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.", {"input_tokens": 0, "output_tokens": 0}
         
         # 요청 내용 로그
         logger.info(f"응답 생성 요청 - 대화 길이: {len(conversation_history)}, 시스템 프롬프트 길이: {len(system_prompt)}")
@@ -156,6 +156,7 @@ class BedrockClient:
         use_model_id = self.model_id
         retry_attempt = 0
         tried_fallback = False
+        token_usage = {"input_tokens": 0, "output_tokens": 0}
         
         while retry_attempt <= self.max_retries:
             try:
@@ -182,33 +183,39 @@ class BedrockClient:
                 response_body = json.loads(response['body'].read().decode('utf-8'))
                 llm_response = response_body.get('content', [{'text': '응답을 생성할 수 없습니다.'}])[0]['text']
                 
+                # 토큰 사용량 추적 - Claude 모델은 usage 필드를 반환함
+                if 'usage' in response_body:
+                    token_usage = {
+                        "input_tokens": response_body["usage"].get("input_tokens", 0),
+                        "output_tokens": response_body["usage"].get("output_tokens", 0)
+                    }
+                else:
+                    # 대략적인 토큰 사용량 추정 (정확하지 않음)
+                    system_tokens = len(system_prompt.split()) * 1.3  # 단어당 약 1.3개 토큰으로 추정
+                    messages_tokens = sum(len(msg.get("content", "").split()) for msg in conversation_history) * 1.3
+                    output_tokens = len(llm_response.split()) * 1.3
+                    
+                    token_usage = {
+                        "input_tokens": int(system_tokens + messages_tokens),
+                        "output_tokens": int(output_tokens)
+                    }
+                
+                # 사용 모델 기록
+                token_usage["model_id"] = use_model_id
+                
                 # JSON 응답 형식 처리 (필요시)
                 if is_json_response and "\"sources\":" in llm_response:
                     try:
                         # 로깅 최소화 (응답 시간 단축)
                         logger.info("JSON 응답 포맷 처리")
                         
-                        # JSON 응답 파싱 시도 - 이중 JSON 문제 해결
-                        if llm_response.strip().startswith("{") and "\"answer\": \"{" in llm_response:
-                            # 중첩된 JSON 감지 (JSON 안에 이스케이프된 JSON이 있는 경우)
-                            try:
-                                outer_json = json.loads(llm_response)
-                                if "answer" in outer_json and isinstance(outer_json["answer"], str):
-                                    # 내부 JSON 추출 시도
-                                    inner_str = outer_json["answer"]
-                                    if inner_str.strip().startswith("{") and inner_str.strip().endswith("}"):
-                                        try:
-                                            inner_json = json.loads(inner_str)
-                                            if "answer" in inner_json and "sources" in inner_json:
-                                                # 내부 JSON이 올바른 형식을 가지고 있으면 이를 사용
-                                                llm_response = inner_str
-                                                logger.info("중첩된 JSON 구조 감지 및 정상화 완료")
-                                        except:
-                                            # 내부 JSON 파싱 실패시 원본 사용
-                                            pass
-                            except:
-                                # 외부 JSON 파싱 실패시 계속 진행
-                                pass
+                        # 중첩 문제 해결을 위해 JSON 이스케이프 제거
+                        if "\"answer\": \"{" in llm_response and "\\\"answer\\\":" in llm_response:
+                            # JSON 이스케이프 문제 있는 경우
+                            llm_response = llm_response.replace("\\\"", "\"").replace("\\\\", "\\")
+                            # 이중 중괄호 정리
+                            llm_response = llm_response.replace("\"{", "{").replace("}\"", "}")
+                            logger.info("JSON 이스케이프 문제 해결")
 
                         # 정상적인 JSON 처리 진행
                         response_json = json.loads(llm_response)
@@ -231,8 +238,8 @@ class BedrockClient:
                     except Exception as json_error:
                         logger.warning(f"JSON 응답 포맷 처리 중 오류: {str(json_error)}")
                 
-                logger.info(f"LLM 응답 생성 완료 - 모델: {use_model_id}, 응답 길이: {len(llm_response)} 글자")
-                return llm_response
+                logger.info(f"LLM 응답 생성 완료 - 모델: {use_model_id}, 응답 길이: {len(llm_response)} 글자, 토큰: {token_usage}")
+                return llm_response, token_usage
                 
             except ClientError as e:
                 error_code = e.response.get('Error', {}).get('Code', '')
@@ -302,11 +309,8 @@ class BedrockClient:
 
         # 모든 재시도 실패 시 폴백 응답
         logger.error("최대 재시도 횟수를 초과하여 기본 응답 반환")
-        if len(conversation_history) > 0 and 'content' in conversation_history[-1]:
-            last_message = conversation_history[-1]['content']
-            return f"죄송합니다. 현재 응답을 생성할 수 없습니다. 질문을 다시 작성해 주시거나 나중에 다시 시도해 주세요."
-        else:
-            return "죄송합니다. 서비스에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요." 
+        fallback_response = "죄송합니다. 현재 응답을 생성할 수 없습니다. 질문을 다시 작성해 주시거나 나중에 다시 시도해 주세요."
+        return fallback_response, {"input_tokens": 0, "output_tokens": 0, "model_id": use_model_id}
 
     def _update_model_from_env(self):
         """

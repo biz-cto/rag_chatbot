@@ -77,6 +77,18 @@ curl -X POST https://abcdef123.execute-api.ap-northeast-2.amazonaws.com/prod/cha
   }'
 ```
 
+### 모델 유형 선택 (스마트/빠른 응답)
+
+```bash
+curl -X POST https://abcdef123.execute-api.ap-northeast-2.amazonaws.com/prod/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "안녕하세요, 질문이 있습니다.",
+    "session_id": "user-123",
+    "model_type": "smart"  // "smart" 또는 "speed" 선택 가능
+  }'
+```
+
 ### 대화 초기화
 
 ```bash
@@ -85,6 +97,60 @@ curl -X POST https://abcdef123.execute-api.ap-northeast-2.amazonaws.com/prod/cha
   -d '{
     "session_id": "user-123"
   }'
+```
+
+## 비용 추적 기능
+
+이 API는 AWS 리소스 사용량을 추적하고 CloudWatch 로그에 비용 정보를 기록하는 기능을 포함하고 있습니다.
+
+### 추적되는 비용 항목
+- Lambda 실행 시간 및 메모리 사용량
+- API Gateway 요청 수
+- Bedrock 모델 토큰 사용량 (입력/출력)
+- S3 읽기 요청 및 데이터 전송량
+- CloudWatch 로그 저장 및 수집
+
+### 비용 추적 로그 확인
+
+비용 추적 로그는 CloudWatch에서 다음 필터를 사용하여 확인할 수 있습니다:
+
+```bash
+aws logs filter-log-events --log-group-name "/aws/lambda/rag-chatbot" --filter-pattern "AWS 비용 정보"
+```
+
+### 개발 모드에서 비용 디버깅
+
+개발 환경에서는 비용 정보를 API 응답에 포함시킬 수 있습니다. Terraform 변수 `environment`를 `dev`로 설정하면 `COST_DEBUG` 환경 변수가 활성화됩니다:
+
+```bash
+terraform apply -var="environment=dev"
+```
+
+이 모드에서는 API 응답에 다음과 같은 추가 필드가 포함됩니다:
+
+```json
+{
+  "answer": "...",
+  "sources": [...],
+  "_debug_cost": {
+    "costs_usd": {
+      "lambda": "$0.00000123",
+      "api_gateway": "$0.00000350",
+      "bedrock": "$0.00015600",
+      "s3": "$0.00000040",
+      "cloudwatch": "$0.00000010",
+      "total": "$0.00016123"
+    },
+    "usage": {
+      "lambda_duration_ms": 243,
+      "lambda_gb_seconds": 0.0002430,
+      "bedrock_input_tokens": 512,
+      "bedrock_output_tokens": 78,
+      "bedrock_model": "anthropic.claude-3-haiku-20240307-v1:0",
+      "s3_get_requests": 1
+    }
+  }
+}
 ```
 
 ## 에러 처리 및 문제 해결
