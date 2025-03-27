@@ -31,7 +31,7 @@ locals {
   src_dir       = "${path.module}"
 }
 
-# S3 버킷 참조 또는 생성 (ap-northeast-2 리전 사용)
+# S3 버킷 참조 또는 생성
 resource "aws_s3_bucket" "pdfs_bucket" {
   count    = var.create_s3_bucket ? 1 : 0
   provider = aws.s3_region
@@ -125,11 +125,6 @@ resource "aws_iam_policy" "bedrock_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Action   = "bedrock:*"
-        Effect   = "Allow"
-        Resource = "*"
-      },
-      {
         Action   = [
           "bedrock:InvokeModel",
           "bedrock:InvokeModelWithResponseStream"
@@ -158,7 +153,7 @@ resource "aws_iam_role_policy_attachment" "bedrock_attachment" {
   policy_arn = aws_iam_policy.bedrock_policy.arn
 }
 
-# Lambda 패키지 생성을 위한 Python 의존성 모듈 설치 및 압축
+# Lambda 패키지 생성
 resource "null_resource" "install_dependencies" {
   triggers = {
     requirements_hash = filemd5("${local.src_dir}/requirements-lambda.txt")
@@ -174,27 +169,16 @@ resource "null_resource" "install_dependencies" {
       # 소스 파일 복사
       cp -R ${local.src_dir}/app ${local.package_dir}/
       cp ${local.src_dir}/lambda_function.py ${local.package_dir}/
-      cp ${local.src_dir}/.env ${local.package_dir}/ 2>/dev/null || echo "환경 파일 없음, 기본값 사용"
+      cp ${local.src_dir}/.env ${local.package_dir}/ 2>/dev/null || true
       
-      # 의존성 설치 - 간소화
-      echo "Python 의존성 설치 중 (간소화됨)..."
+      # 의존성 설치
       pip install --target ${local.package_dir} -r ${local.src_dir}/requirements-lambda.txt
       
-      # 불필요한 파일 제거 - 패키지 크기 최소화
-      echo "패키지 크기 최적화 중..."
-      find ${local.package_dir} -name "*.pyc" -type f -delete
+      # 불필요한 파일 제거
+      find ${local.package_dir} -name "*.pyc" -delete
       find ${local.package_dir} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-      find ${local.package_dir} -name "*.so" -type f -exec strip {} \; 2>/dev/null || true
       find ${local.package_dir} -name "tests" -type d -exec rm -rf {} + 2>/dev/null || true
-      
-      # Lambda에 불필요한 대용량 패키지 제거
-      echo "불필요한 패키지 제거 중..."
       rm -rf ${local.package_dir}/bin
-      
-      # 패키지 크기 확인
-      du -sh ${local.package_dir}
-      
-      echo "Lambda 패키지 준비 완료"
     EOT
   }
 }
@@ -217,16 +201,15 @@ resource "aws_lambda_function" "rag_chatbot" {
   runtime          = var.lambda_runtime
   filename         = data.archive_file.lambda_package.output_path
   source_code_hash = data.archive_file.lambda_package.output_base64sha256
-  timeout          = 30  # 시간 초과 값 축소 (불필요한 대기 시간 감소)
-  memory_size      = 1024  # 메모리 최적화 (충분한 성능 + 비용 효율성)
+  timeout          = 30
+  memory_size      = 1024
 
   environment {
     variables = {
       CUSTOM_AWS_REGION = var.aws_region
       S3_BUCKET_NAME    = var.s3_bucket_name
-      BATCH_SIZE        = "20"  # 임베딩 처리 속도 향상
-      FAST_MODE         = "true"  # 빠른 모드 활성화
-      COST_TRACKING     = "simple"  # 간소화된 비용 추적 모드
+      BATCH_SIZE        = "20"
+      FAST_MODE         = "true"
     }
   }
 
@@ -235,7 +218,6 @@ resource "aws_lambda_function" "rag_chatbot" {
     Environment = var.environment
   }
 
-  # 복잡한 Python 패키지를 처리하기 위한 임시 디렉토리의 크기 제한 증가
   ephemeral_storage {
     size = 10240 # MB
   }
@@ -484,7 +466,6 @@ resource "aws_api_gateway_deployment" "chatbot_deployment" {
     create_before_destroy = true
   }
   
-  # 배포마다 유니크한 값을 생성하여 새로운 배포가 강제되도록 함
   triggers = {
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.chat_resource.id,

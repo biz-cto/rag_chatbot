@@ -221,9 +221,29 @@ class ChatService:
             
             # 기존 형식으로 응답 변환
             response_data = {
-                "response": response,
-                "sources": list(set(sources))
+                "answer": response,
+                "sources": []
             }
+            
+            # 출처 정보 변환 및 추가
+            formatted_sources = []
+            for source in sources:
+                if isinstance(source, str):
+                    formatted_sources.append({
+                        "source": source,
+                        "contents": []
+                    })
+                elif isinstance(source, dict) and "source" in source:
+                    formatted_sources.append(source)
+                    
+            # 소스 정보가 없는 경우에도 기본 정보 추가
+            if not formatted_sources and context:
+                formatted_sources.append({
+                    "source": "문서",
+                    "contents": ["관련 문서 내용"]
+                })
+                
+            response_data["sources"] = formatted_sources
             
             # 비용 추적 완료 및 로깅
             self.cost_tracker.stop()
@@ -248,13 +268,25 @@ class ChatService:
                 "content": fallback_response
             })
             
+            # 기본 출처 정보 생성
+            default_sources = []
+            if sources:
+                for source in sources:
+                    if isinstance(source, str):
+                        default_sources.append({
+                            "source": source,
+                            "contents": []
+                        })
+                    elif isinstance(source, dict) and "source" in source:
+                        default_sources.append(source)
+            
             # 비용 추적 완료 및 로깅
             self.cost_tracker.stop()
             self.cost_tracker.log_costs(request_id=session_id, request_type="chat_error")
             
             return {
-                "response": fallback_response,
-                "sources": [],
+                "answer": fallback_response,
+                "sources": default_sources,
                 "error": str(e)
             }
     
@@ -287,13 +319,31 @@ class ChatService:
             try:
                 # 검색된 문서의 원본 정보 추출
                 for doc in self.retriever.retrieve(user_message):
-                    if 'source' in doc and 'content' in doc:
-                        doc_sources.append({
+                    if 'source' in doc:
+                        source_info = {
                             'source': doc['source'],
-                            'contents': [doc['content']]
-                        })
+                            'contents': []
+                        }
+                        if 'content' in doc:
+                            # 내용 앞부분만 포함 (너무 길지 않게)
+                            content_preview = doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content']
+                            source_info['contents'].append(content_preview)
+                        doc_sources.append(source_info)
             except Exception as e:
                 logger.error(f"문서 원본 정보 추출 중 오류: {str(e)}")
+                # 기본 소스 정보라도 추가
+                if context:
+                    doc_sources.append({
+                        'source': "문서",
+                        'contents': ["관련 문서 내용"]
+                    })
+        
+        # 빈 문서 소스 배열이라도 생성
+        if not doc_sources and context:
+            doc_sources = [{
+                'source': "문서",
+                'contents': ["관련 문서 내용"]
+            }]
         
         # JSON 응답 형식 지시사항 추가 - 중첩 JSON 문제 해결을 위한 명확한 지시
         json_format_instruction = """
@@ -314,6 +364,7 @@ JSON 문법을 정확히 준수하고, 답변은 "answer" 필드에 직접 작�
         system_prompt = f"""당신은 문서 기반 질의응답 AI입니다.
 주어진 컨텍스트 정보만 사용하여 사용자 질문에 답변하세요.
 컨텍스트에 없는 내용은 '이 정보는 제공된 문서에 포함되어 있지 않습니다'라고 답하세요.
+반드시 관련 문서 출처 정보를 포함해 주세요.
 
 컨텍스트:
 {context}
@@ -338,27 +389,49 @@ JSON 문법을 정확히 준수하고, 답변은 "answer" 필드에 직접 작�
                     # 유효한 JSON 확인
                     json_response = json.loads(response)
                     
-                    # JSON 응답에 문서 소스 정보가 없으면 추가
-                    if "sources" not in json_response and doc_sources:
+                    # JSON 응답에 문서 소스 정보가 없거나 비어있으면 추가
+                    if "sources" not in json_response or not json_response["sources"]:
                         logger.info(f"JSON 응답에 문서 소스 정보 추가: {len(doc_sources)}개")
                         json_response["sources"] = doc_sources
-                        response = json.dumps(json_response, ensure_ascii=False)
                     
-                    logger.info(f"최종 LLM 응답 구조: {', '.join(json_response.keys())}")
+                    # 최종 JSON 응답 생성
+                    response = json.dumps(json_response, ensure_ascii=False)
+                    logger.info(f"최종 LLM 응답 구조: {', '.join(json_response.keys())} (소스 수: {len(json_response.get('sources', []))})")
                 except json.JSONDecodeError:
-                    logger.warning("LLM의 응답이 유효한 JSON 형식이 아닙니다")
+                    logger.warning("LLM의 응답이 유효한 JSON 형식이 아닙니다. 수동으로 JSON 형식 생성")
+                    # JSON이 아닌 경우 수동으로 JSON 형식 생성
+                    formatted_response = {
+                        "answer": response,
+                        "sources": doc_sources
+                    }
+                    response = json.dumps(formatted_response, ensure_ascii=False)
                 except Exception as json_error:
                     logger.error(f"JSON 응답 처리 중 오류: {str(json_error)}")
+                    # 오류 발생 시 수동으로 JSON 형식 생성
+                    formatted_response = {
+                        "answer": response,
+                        "sources": doc_sources
+                    }
+                    response = json.dumps(formatted_response, ensure_ascii=False)
             else:
-                logger.info("응답이 JSON 형식이 아닙니다.")
+                logger.info("응답이 JSON 형식이 아닙니다. 수동으로 JSON 형식 생성")
+                # JSON이 아닌 경우 수동으로 JSON 형식 생성
+                formatted_response = {
+                    "answer": response,
+                    "sources": doc_sources
+                }
+                response = json.dumps(formatted_response, ensure_ascii=False)
             
             return response, token_usage
         except Exception as e:
             logger.error(f"LLM 응답 생성 중 오류: {str(e)}")
-            if context:
-                return "관련 정보를 찾았으나 응답 생성 중 오류가 발생했습니다. 질문을 다시 작성해 주세요.", {"input_tokens": 0, "output_tokens": 0, "model_id": ""}
-            else:
-                return "죄송합니다. 응답 생성 중 오류가 발생했습니다. 다시 시도해 주세요.", {"input_tokens": 0, "output_tokens": 0, "model_id": ""}
+            # 오류 시에도 JSON 응답 형식 유지
+            error_response = {
+                "answer": "죄송합니다. 응답 생성 중 오류가 발생했습니다. 다시 시도해 주세요.",
+                "sources": doc_sources,
+                "error": str(e)
+            }
+            return json.dumps(error_response, ensure_ascii=False), {"input_tokens": 0, "output_tokens": 0, "model_id": ""}
     
     def reset_conversation(self, session_id: str) -> None:
         """
