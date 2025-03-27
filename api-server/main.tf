@@ -246,11 +246,11 @@ resource "aws_lambda_function" "rag_chatbot" {
 
   environment {
     variables = {
-      CUSTOM_AWS_REGION = "us-east-1"  # Bedrock은 us-east-1 리전 강제 사용
+      CUSTOM_AWS_REGION = var.aws_region
       S3_BUCKET_NAME    = var.s3_bucket_name
-      LAMBDA_ENVIRONMENT = "true"
-      BATCH_SIZE         = "20"         # 더 빠른 임베딩 처리를 위해 배치 크기 증가
-      FAST_MODE          = "true"       # 빠른 응답 모드 활성화
+      BATCH_SIZE        = "20"  # 임베딩 처리 속도 향상
+      FAST_MODE         = "false"  # 스마트 모드로 변경
+      SMART_MODE        = "true"   # 더 똑똑한 모델 활성화
     }
   }
 

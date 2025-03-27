@@ -125,23 +125,36 @@ class ChatService:
             # JSON 응답 처리
             if response.strip().startswith("{") and response.strip().endswith("}"):
                 try:
+                    logger.info("JSON 형식 응답 처리 시작")
                     # JSON 파싱 시도
                     json_response = json.loads(response)
                     
                     # 응답 형식 확인
                     if "answer" in json_response:
+                        logger.info("'answer' 키가 있는 JSON 응답 감지")
                         # JSON 응답에서 텍스트만 추출하여 대화 기록에 추가
                         self.conversations[session_id].append({
                             "role": "assistant",
                             "content": json_response["answer"]
                         })
                         
+                        # 소스 정보 로깅
+                        if "sources" in json_response:
+                            sources_count = len(json_response["sources"])
+                            logger.info(f"JSON 응답에 포함된 소스 정보: {sources_count}개")
+                            if sources_count > 0:
+                                sample_source = json_response["sources"][0]["source"] if "source" in json_response["sources"][0] else "형식 오류"
+                                logger.info(f"첫 번째 소스: {sample_source}")
+                        
                         # 원본 JSON 응답 반환
+                        logger.info(f"JSON 응답 구조: {', '.join(json_response.keys())}")
                         return json_response
                 except json.JSONDecodeError:
                     logger.warning("JSON 파싱 실패, 일반 텍스트로 처리합니다")
                 except Exception as json_error:
                     logger.error(f"JSON 응답 처리 중 오류: {str(json_error)}")
+            else:
+                logger.info("일반 텍스트 응답 처리")
             
             # 일반 텍스트 응답 처리 (JSON 파싱 실패 시)
             self.conversations[session_id].append({
@@ -227,11 +240,16 @@ class ChatService:
 모든 답변은 반드시 한국어로 작성하세요.
 """
         
-        # 빠른 응답을 위해 프롬프트 간소화
-        system_prompt = f"""당신은 도움이 되는 AI 어시스턴트입니다. 
-아래 제공된 컨텍스트를 기반으로 사용자 질문에 간결하게 답변하세요.
-답변은 짧고 직접적으로 작성하세요.
-컨텍스트에 관련 정보가 없는 경우, '이 정보는 제공된 문서에 포함되어 있지 않습니다.'라고 답변하세요.
+        # 보다 지능적인 응답을 위한 프롬프트 개선
+        system_prompt = f"""당신은 정확하고 전문적인 지식을 갖춘 AI 어시스턴트입니다.
+사용자의 질문에 대해 아래 제공된 컨텍스트를 기반으로 정확하고 상세한 답변을 제공하세요.
+
+답변 작성 가이드라인:
+1. 컨텍스트에 명시된 정보만 사용하여 응답하세요.
+2. 컨텍스트에 없는 정보는 추측하지 마세요.
+3. 정확한 사실과 관련 세부 정보를 제공하세요.
+4. 단락을 나누고 필요시 번호 매김을 사용하여 구조화된 응답을 제공하세요.
+5. 컨텍스트에 관련 정보가 없는 경우, "이 정보는 제공된 문서에 포함되어 있지 않습니다."라고 명확히 답변하세요.
 
 컨텍스트:
 {context}
@@ -258,12 +276,17 @@ class ChatService:
                     
                     # JSON 응답에 문서 소스 정보가 없으면 추가
                     if "sources" not in json_response and doc_sources:
+                        logger.info(f"JSON 응답에 문서 소스 정보 추가: {len(doc_sources)}개")
                         json_response["sources"] = doc_sources
                         response = json.dumps(json_response, ensure_ascii=False)
+                    
+                    logger.info(f"최종 LLM 응답 구조: {', '.join(json_response.keys())}")
                 except json.JSONDecodeError:
                     logger.warning("LLM의 응답이 유효한 JSON 형식이 아닙니다")
                 except Exception as json_error:
                     logger.error(f"JSON 응답 처리 중 오류: {str(json_error)}")
+            else:
+                logger.info("응답이 JSON 형식이 아닙니다.")
             
             return response
         except Exception as e:

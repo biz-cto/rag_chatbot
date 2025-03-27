@@ -4,6 +4,7 @@ import boto3
 import botocore.config
 import time
 import random
+import os
 from typing import List, Dict, Any, Optional
 from botocore.exceptions import ClientError, ConnectionError
 
@@ -30,18 +31,36 @@ class BedrockClient:
         # Bedrock은 무조건 us-east-1 리전 사용
         self.aws_region = "us-east-1"
         self.bedrock_runtime = self._create_bedrock_client(self.aws_region)
-        # 기본 모델 - 더 빠른 응답을 위해 Claude Instant 사용
-        self.model_id = "anthropic.claude-instant-v1"
-        # 폴백 모델 없음 (이미 가장 빠른 모델 사용)
-        self.fallback_model_id = self.model_id
-        # 빠른 응답을 위해 토큰 수 축소
-        self.max_tokens = 1024
+        
+        # 환경 변수로부터 모드 확인
+        smart_mode = os.environ.get("SMART_MODE", "").lower() == "true"
+        fast_mode = os.environ.get("FAST_MODE", "").lower() == "true"
+        
+        # 모드에 따라 모델 선택
+        if smart_mode:
+            # 스마트 모드 - Claude 3 Sonnet 사용
+            self.model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+            self.max_tokens = 4096
+            logger.info("스마트 모드 활성화: Claude 3 Sonnet 모델 사용")
+        elif fast_mode:
+            # 빠른 응답 모드 - Claude Instant 사용
+            self.model_id = "anthropic.claude-instant-v1"
+            self.max_tokens = 1024
+            logger.info("빠른 응답 모드 활성화: Claude Instant 모델 사용")
+        else:
+            # 기본 모드 - Claude 3 Haiku (빠르지만 더 스마트)
+            self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+            self.max_tokens = 2048
+            logger.info("기본 모드 활성화: Claude 3 Haiku 모델 사용")
+        
+        # 폴백 모델 - 항상 가장 가벼운 모델로 설정
+        self.fallback_model_id = "anthropic.claude-instant-v1"
         
         # 재시도 설정
         self.max_retries = 2
         self.retry_base_delay = 0.5
         
-        logger.info(f"BedrockClient, 리전: {self.aws_region}, 초기화 완료 - 기본 모델: {self.model_id} (빠른 응답 모드)")
+        logger.info(f"BedrockClient, 리전: {self.aws_region}, 초기화 완료 - 모델: {self.model_id}")
     
     def _create_bedrock_client(self, aws_region: str):
         """
@@ -133,6 +152,7 @@ class BedrockClient:
         # 기본 모델로 시도
         use_model_id = self.model_id
         retry_attempt = 0
+        tried_fallback = False
         
         while retry_attempt <= self.max_retries:
             try:
@@ -162,12 +182,15 @@ class BedrockClient:
                 # JSON 응답 형식 처리 (필요시)
                 if is_json_response and "\"sources\":" in llm_response:
                     try:
+                        logger.info("JSON 응답 포맷 처리 시작")
                         # JSON 응답 파싱 시도
                         response_json = json.loads(llm_response)
                         
                         # sources 키 형식 변경
                         if "sources" in response_json and isinstance(response_json["sources"], list):
                             # sources 형식 개선: PDF 페이지 대신 문맥 사용
+                            logger.info(f"원본 sources 정보: {json.dumps(response_json['sources'][:2], ensure_ascii=False)}")
+                            
                             for source in response_json["sources"]:
                                 if "page" in source:
                                     # page 키를 contents로 변경
@@ -177,6 +200,9 @@ class BedrockClient:
                             
                             # 개선된 JSON 응답으로 변환
                             llm_response = json.dumps(response_json, ensure_ascii=False)
+                            logger.info(f"변환된 JSON 응답 포맷: {llm_response[:200]}...")
+                        else:
+                            logger.info("JSON 응답에 sources 정보가 없거나 형식이 다릅니다")
                     except json.JSONDecodeError:
                         logger.warning("JSON 응답 포맷 처리 실패: 유효하지 않은 JSON 형식")
                     except Exception as json_error:
@@ -193,6 +219,13 @@ class BedrockClient:
                 
                 # 사용량 제한이나 모델 사용 불가 오류일 경우
                 if error_code in ('ThrottlingException', 'ServiceUnavailableException', 'ModelNotReadyException'):
+                    # 폴백 모델로 전환 (아직 시도하지 않았을 경우)
+                    if not tried_fallback and use_model_id != self.fallback_model_id:
+                        use_model_id = self.fallback_model_id
+                        logger.info(f"폴백 모델로 전환: {use_model_id}")
+                        tried_fallback = True
+                        continue
+                    
                     # 지수 백오프로 재시도
                     wait_time = self._exponential_backoff(retry_attempt)
                     logger.info(f"{wait_time:.2f}초 후 재시도")
@@ -200,11 +233,25 @@ class BedrockClient:
                     retry_attempt += 1
                     continue
                 else:
-                    # 다른 오류는 바로 실패 처리
+                    # 다른 오류이지만 폴백 모델로 시도하지 않았다면 전환
+                    if not tried_fallback and use_model_id != self.fallback_model_id:
+                        use_model_id = self.fallback_model_id
+                        logger.info(f"오류 발생으로 폴백 모델로 전환: {use_model_id}")
+                        tried_fallback = True
+                        continue
+                    # 폴백모델도 실패했다면 종료
                     raise BedrockClientError(f"Bedrock API 오류: {error_msg}")
                     
             except ConnectionError as e:
                 logger.error(f"Bedrock 연결 오류 (시도 {retry_attempt+1}/{self.max_retries+1}): {str(e)}")
+                
+                # 폴백 모델로 전환 (아직 시도하지 않았을 경우)
+                if not tried_fallback and use_model_id != self.fallback_model_id:
+                    use_model_id = self.fallback_model_id
+                    logger.info(f"연결 오류로 폴백 모델로 전환: {use_model_id}")
+                    tried_fallback = True
+                    continue
+                
                 wait_time = self._exponential_backoff(retry_attempt)
                 logger.info(f"{wait_time:.2f}초 후 재시도")
                 time.sleep(wait_time)
@@ -212,6 +259,14 @@ class BedrockClient:
                 
             except Exception as e:
                 logger.error(f"LLM 응답 생성 중 오류 발생: {str(e)}")
+                
+                # 폴백 모델로 전환 (아직 시도하지 않았을 경우)
+                if not tried_fallback and use_model_id != self.fallback_model_id:
+                    use_model_id = self.fallback_model_id
+                    logger.info(f"일반 오류로 폴백 모델로 전환: {use_model_id}")
+                    tried_fallback = True
+                    continue
+                
                 # 재시도
                 if retry_attempt < self.max_retries:
                     wait_time = self._exponential_backoff(retry_attempt)

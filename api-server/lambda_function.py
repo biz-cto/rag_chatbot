@@ -207,11 +207,17 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             if 'error' in response:
                                 response['error'] = response['error']
                     
-                    return {
+                    # 최종 응답 생성
+                    final_response = {
                         'statusCode': 200,
                         'headers': cors_headers,
                         'body': json.dumps(response, ensure_ascii=False)
                     }
+                    
+                    # CloudWatch에 전체 응답 JSON 로깅 
+                    logger.info(f"사용자 응답 JSON: {json.dumps(response, ensure_ascii=False)}")
+                    
+                    return final_response
                 except Exception as e:
                     logger.error(f"메시지 처리 중 오류: {str(e)}", exc_info=True)
                     return error_response(f"메시지 처리 중 오류가 발생했습니다: {str(e)}", cors_headers, 500)
@@ -227,10 +233,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     # 대화 기록 초기화
                     chat_service.reset_conversation(session_id)
                     
+                    # 응답 생성
+                    reset_response = {
+                        'message': '대화 기록이 초기화되었습니다.',
+                        'session_id': session_id
+                    }
+                    
+                    # CloudWatch에 전체 응답 JSON 로깅
+                    logger.info(f"대화 초기화 응답 JSON: {json.dumps(reset_response, ensure_ascii=False)}")
+                    
                     return {
                         'statusCode': 200,
                         'headers': cors_headers,
-                        'body': json.dumps({'message': '대화 기록이 초기화되었습니다.', 'session_id': session_id})
+                        'body': json.dumps(reset_response, ensure_ascii=False)
                     }
                 except Exception as e:
                     logger.error(f"대화 초기화 중 오류: {str(e)}", exc_info=True)
