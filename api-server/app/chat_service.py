@@ -219,31 +219,53 @@ class ChatService:
                 "content": response
             })
             
-            # 기존 형식으로 응답 변환
+            # 기본 출처 정보 생성
+            default_sources = []
+            if sources:
+                for source in sources:
+                    if isinstance(source, str):
+                        # 출처 문자열을 파싱하여 파일명과 페이지 정보 추출
+                        source_display = source
+                        if " (페이지 " in source:
+                            parts = source.split(" (페이지 ")
+                            file_path = parts[0]
+                            page = parts[1].replace(")", "")
+                            # 파일명만 추출 (경로 제거)
+                            file_name = file_path.split("/")[-1] if "/" in file_path else file_path
+                            source_display = f"PDF 파일: {file_name} (페이지: {page})"
+                        
+                        default_sources.append({
+                            "source": source_display,
+                            "contents": []
+                        })
+                    elif isinstance(source, dict) and "source" in source:
+                        default_sources.append(source)
+            
+            # 소스 정보가 없지만 컨텍스트가 있는 경우 기본 정보 추가
+            if not default_sources and context:
+                # 관련 문서에서 일부 정보라도 추출
+                sample_content = []
+                if relevant_docs and len(relevant_docs) > 0:
+                    first_doc = relevant_docs[0]
+                    if 'source' in first_doc:
+                        source_name = first_doc['source']
+                        source_display = source_name
+                        # 파일 정보 추출
+                        if 'file' in first_doc:
+                            file_name = first_doc['file'].split("/")[-1] if "/" in first_doc['file'] else first_doc['file']
+                            source_display = f"PDF 파일: {file_name}"
+                            if 'page' in first_doc:
+                                source_display += f" (페이지: {first_doc['page']})"
+                        
+                        default_sources.append({
+                            "source": source_display,
+                            "contents": sample_content or ["관련 문서 내용"]
+                        })
+            
             response_data = {
                 "answer": response,
-                "sources": []
+                "sources": default_sources
             }
-            
-            # 출처 정보 변환 및 추가
-            formatted_sources = []
-            for source in sources:
-                if isinstance(source, str):
-                    formatted_sources.append({
-                        "source": source,
-                        "contents": []
-                    })
-                elif isinstance(source, dict) and "source" in source:
-                    formatted_sources.append(source)
-                    
-            # 소스 정보가 없는 경우에도 기본 정보 추가
-            if not formatted_sources and context:
-                formatted_sources.append({
-                    "source": "문서",
-                    "contents": ["관련 문서 내용"]
-                })
-                
-            response_data["sources"] = formatted_sources
             
             # 비용 추적 완료 및 로깅
             self.cost_tracker.stop()
@@ -273,12 +295,43 @@ class ChatService:
             if sources:
                 for source in sources:
                     if isinstance(source, str):
+                        # 출처 문자열을 파싱하여 파일명과 페이지 정보 추출
+                        source_display = source
+                        if " (페이지 " in source:
+                            parts = source.split(" (페이지 ")
+                            file_path = parts[0]
+                            page = parts[1].replace(")", "")
+                            # 파일명만 추출 (경로 제거)
+                            file_name = file_path.split("/")[-1] if "/" in file_path else file_path
+                            source_display = f"PDF 파일: {file_name} (페이지: {page})"
+                        
                         default_sources.append({
-                            "source": source,
+                            "source": source_display,
                             "contents": []
                         })
                     elif isinstance(source, dict) and "source" in source:
                         default_sources.append(source)
+            
+            # 소스 정보가 없지만 컨텍스트가 있는 경우 기본 정보 추가
+            if not default_sources and context:
+                # 관련 문서에서 일부 정보라도 추출
+                sample_content = []
+                if relevant_docs and len(relevant_docs) > 0:
+                    first_doc = relevant_docs[0]
+                    if 'source' in first_doc:
+                        source_name = first_doc['source']
+                        source_display = source_name
+                        # 파일 정보 추출
+                        if 'file' in first_doc:
+                            file_name = first_doc['file'].split("/")[-1] if "/" in first_doc['file'] else first_doc['file']
+                            source_display = f"PDF 파일: {file_name}"
+                            if 'page' in first_doc:
+                                source_display += f" (페이지: {first_doc['page']})"
+                        
+                        default_sources.append({
+                            "source": source_display,
+                            "contents": sample_content or ["관련 문서 내용"]
+                        })
             
             # 비용 추적 완료 및 로깅
             self.cost_tracker.stop()
@@ -320,13 +373,31 @@ class ChatService:
                 # 검색된 문서의 원본 정보 추출
                 for doc in self.retriever.retrieve(user_message):
                     if 'source' in doc:
+                        # PDF 파일명과 페이지 정보 추출
+                        source_display = doc['source']
+                        # PDF 파일명만 깔끔하게 추출 (경로 제거)
+                        if "file" in doc:
+                            file_name = doc["file"].split("/")[-1] if "/" in doc["file"] else doc["file"]
+                            source_display = f"PDF 파일: {file_name}"
+                            if "page" in doc:
+                                source_display += f" (페이지: {doc['page']})"
+                        
                         source_info = {
-                            'source': doc['source'],
+                            'source': source_display,
                             'contents': []
                         }
                         if 'content' in doc:
-                            # 내용 앞부분만 포함 (너무 길지 않게)
-                            content_preview = doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content']
+                            # 내용을 더 명확하게 표시 (너무 길지 않게, 핵심 내용 중심으로)
+                            content = doc['content']
+                            
+                            # 긴 내용은 중요 문장 위주로 추출 (마침표 기준으로 분리)
+                            sentences = content.split('. ')
+                            if len(sentences) > 3:
+                                # 앞부분 2문장과 뒷부분 1문장 포함
+                                content_preview = '. '.join(sentences[:2]) + '. ... ' + sentences[-1]
+                            else:
+                                content_preview = content[:300] + "..." if len(content) > 300 else content
+                                
                             source_info['contents'].append(content_preview)
                         doc_sources.append(source_info)
             except Exception as e:
@@ -352,8 +423,8 @@ class ChatService:
   "answer": "답변 내용을 여기에 작성",
   "sources": [
     {
-      "source": "출처명",
-      "contents": ["참고한 내용"]
+      "source": "출처명 (파일명, 페이지 등)",
+      "contents": ["참고한 내용/문장"]
     }
   ]
 }
@@ -365,6 +436,7 @@ JSON 문법을 정확히 준수하고, 답변은 "answer" 필드에 직접 작�
 주어진 컨텍스트 정보만 사용하여 사용자 질문에 답변하세요.
 컨텍스트에 없는 내용은 '이 정보는 제공된 문서에 포함되어 있지 않습니다'라고 답하세요.
 반드시 관련 문서 출처 정보를 포함해 주세요.
+답변에 사용한 구체적인 문장이나 내용을 출처와 함께 명확히 표시하세요.
 
 컨텍스트:
 {context}
