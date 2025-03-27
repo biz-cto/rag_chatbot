@@ -4,164 +4,178 @@ import os
 import traceback
 from typing import Dict, Any
 
-from app.services.rag_service import get_rag_service
-from app.models.chat_models import ChatRequest
+from app.chat_service import ChatService
 
 # 로깅 설정
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# 환경 변수 검증
-required_env_vars = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION", "S3_BUCKET_NAME"]
-missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
-if missing_vars:
-    logger.error(f"필수 환경 변수가 설정되지 않았습니다: {', '.join(missing_vars)}")
+# 환경 변수 검증 및 설정
+def validate_environment():
+    """환경 변수를 검증하고 기본값을 설정합니다."""
+    # 필수 환경 변수
+    env_vars = {
+        "AWS_REGION": os.environ.get("AWS_REGION", "ap-northeast-2"),
+        "S3_BUCKET_NAME": os.environ.get("S3_BUCKET_NAME", "garden-rag-01")
+    }
+    
+    missing_vars = [key for key, value in env_vars.items() if not value]
+    if missing_vars:
+        warning_msg = f"일부 환경 변수가 설정되지 않았습니다: {', '.join(missing_vars)}. 기본값을 사용합니다."
+        logger.warning(warning_msg)
+    
+    # 환경 변수 설정
+    for key, value in env_vars.items():
+        if value:
+            os.environ[key] = value
+    
+    return env_vars
 
-# RAG 서비스 인스턴스
-rag_service = None
+# 초기 환경 변수 검증
+ENV = validate_environment()
 
-def init_service():
-    """Lambda 함수 초기화 시 RAG 서비스를 초기화합니다."""
-    global rag_service
-    try:
-        if rag_service is None:
-            logger.info("RAG 서비스 초기화 중...")
-            rag_service = get_rag_service()
-            logger.info("RAG 서비스 초기화 완료")
-    except Exception as e:
-        error_msg = f"RAG 서비스 초기화 실패: {str(e)}"
-        logger.error(error_msg)
-        logger.error(traceback.format_exc())
-        raise RuntimeError(error_msg)
+# 챗봇 서비스 인스턴스 - 지연 초기화 패턴 적용
+_chat_service = None
+
+def get_chat_service():
+    """ChatService 인스턴스를 가져옵니다. 없으면 생성합니다."""
+    global _chat_service
+    if _chat_service is None:
+        try:
+            logger.info("ChatService 초기화 중...")
+            _chat_service = ChatService(
+                s3_bucket_name=ENV["S3_BUCKET_NAME"],
+                aws_region=ENV["AWS_REGION"]
+            )
+            logger.info("ChatService 초기화 완료")
+        except Exception as e:
+            error_msg = f"ChatService 초기화 실패: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            raise RuntimeError(error_msg)
+    return _chat_service
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Lambda 함수 핸들러
+    AWS Lambda 핸들러 함수
     
     Parameters:
-        event: API Gateway로부터의 이벤트 데이터
-        context: Lambda 컨텍스트 객체
-        
-    Returns:
-        Lambda 응답 객체
-    """
-    # 요청 로깅
-    request_id = context.aws_request_id if context else "unknown"
-    logger.info(f"요청 ID: {request_id} - 이벤트: {json.dumps(event, ensure_ascii=False)[:1000]}")
+    - event: Lambda 이벤트 객체
+    - context: Lambda 컨텍스트 객체
     
-    # 서비스 초기화
-    try:
-        init_service()
-    except Exception as e:
-        logger.error(f"서비스 초기화 실패: {str(e)}")
+    Returns:
+    - API Gateway 응답 객체
+    """
+    request_id = context.aws_request_id if context else "unknown"
+    logger.info(f"요청 ID: {request_id} - 이벤트: {json.dumps(event, default=str)[:1000]}")
+    
+    # API Gateway 프록시 통합에서의 HTTP 메서드와 경로 추출
+    http_method = event.get('httpMethod', '')
+    path = event.get('path', '')
+    
+    # CORS 헤더 설정
+    cors_headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'OPTIONS,POST,GET',
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With'
+    }
+    
+    # OPTIONS 요청 처리 (CORS 프리플라이트)
+    if http_method == 'OPTIONS':
         return {
-            'statusCode': 500,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({
-                'error': f'서비스 초기화 실패: {str(e)}'
-            })
+            'statusCode': 200,
+            'headers': cors_headers,
+            'body': json.dumps({'message': 'CORS enabled'})
         }
     
     try:
-        # API Gateway로부터 요청 본문 파싱
-        if 'body' in event:
+        # 서비스 초기화
+        chat_service = get_chat_service()
+        
+        # POST 요청 처리
+        if http_method == 'POST':
+            # 요청 본문 파싱
             try:
-                body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+                body = json.loads(event.get('body', '{}')) if event.get('body') else {}
             except json.JSONDecodeError as e:
                 logger.error(f"JSON 파싱 오류: {str(e)}")
-                return {
-                    'statusCode': 400,
-                    'headers': {
-                        'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': '*'
-                    },
-                    'body': json.dumps({
-                        'error': '잘못된 JSON 형식입니다.'
-                    })
-                }
-        else:
-            body = event
-        
-        # 경로 판별
-        path = event.get('path', '')
-        http_method = event.get('httpMethod', 'POST')
-        
-        logger.info(f"처리 중: {http_method} {path}")
-        
-        # 채팅 요청 처리
-        if path.endswith('/chat') and http_method == 'POST':
-            question = body.get('question', '')
-            if not question:
-                return {
-                    'statusCode': 400,
-                    'headers': {
-                        'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': '*'
-                    },
-                    'body': json.dumps({
-                        'error': '질문이 필요합니다.'
-                    })
-                }
+                return error_response('잘못된 JSON 형식입니다.', cors_headers)
             
-            # 질문 처리
-            logger.info(f"질문 처리 중: {question[:100]}...")
-            response = rag_service.answer_question(question)
-            logger.info(f"응답 생성 완료: {len(json.dumps(response))} 바이트")
-            
-            return {
-                'statusCode': 200,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*'
-                },
-                'body': json.dumps(response, ensure_ascii=False)
-            }
+            # 엔드포인트별 처리
+            if path.endswith('/chat'):
+                # 채팅 엔드포인트
+                user_message = body.get('message', '')
+                session_id = body.get('session_id', '')
+                
+                if not user_message:
+                    return error_response('메시지가 제공되지 않았습니다.', cors_headers)
+                
+                if not session_id:
+                    # 세션 ID가 없는 경우 랜덤 생성
+                    import uuid
+                    session_id = str(uuid.uuid4())
+                    logger.info(f"새 세션 ID 생성: {session_id}")
+                
+                try:
+                    # 채팅 응답 생성
+                    response = chat_service.process_message(user_message, session_id)
+                    
+                    return {
+                        'statusCode': 200,
+                        'headers': cors_headers,
+                        'body': json.dumps(response, ensure_ascii=False)
+                    }
+                except Exception as e:
+                    logger.error(f"메시지 처리 중 오류: {str(e)}", exc_info=True)
+                    return error_response(f"메시지 처리 중 오류가 발생했습니다.", cors_headers, 500)
+                
+            elif path.endswith('/chat/reset'):
+                # 대화 초기화 엔드포인트
+                session_id = body.get('session_id', '')
+                
+                if not session_id:
+                    return error_response('세션 ID가 제공되지 않았습니다.', cors_headers)
+                
+                try:
+                    # 대화 기록 초기화
+                    chat_service.reset_conversation(session_id)
+                    
+                    return {
+                        'statusCode': 200,
+                        'headers': cors_headers,
+                        'body': json.dumps({'message': '대화 기록이 초기화되었습니다.', 'session_id': session_id})
+                    }
+                except Exception as e:
+                    logger.error(f"대화 초기화 중 오류: {str(e)}", exc_info=True)
+                    return error_response(f"대화 초기화 중 오류가 발생했습니다.", cors_headers, 500)
+                
+            else:
+                # 알 수 없는 엔드포인트
+                return error_response(f'알 수 없는 엔드포인트입니다: {path}', cors_headers, 404)
         
-        # 채팅 기록 초기화 요청 처리
-        elif path.endswith('/chat/reset') and http_method == 'POST':
-            logger.info("대화 기록 초기화 요청")
-            rag_service.reset_conversation()
-            logger.info("대화 기록 초기화 완료")
-            
-            return {
-                'statusCode': 200,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*'
-                },
-                'body': json.dumps({
-                    'message': '대화 기록이 초기화되었습니다.'
-                })
-            }
+        # 지원되지 않는 HTTP 메서드
+        return error_response(f'지원되지 않는 HTTP 메서드입니다: {http_method}', cors_headers, 405)
         
-        # 알 수 없는 경로
-        else:
-            logger.warning(f"알 수 없는 엔드포인트: {http_method} {path}")
-            return {
-                'statusCode': 404,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*'
-                },
-                'body': json.dumps({
-                    'error': '요청한 엔드포인트가 존재하지 않습니다.'
-                })
-            }
-            
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"요청 처리 중 오류 발생: {str(e)}")
         logger.error(error_trace)
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({
-                'error': f'요청 처리 중 오류 발생: {str(e)}'
-            }, ensure_ascii=False)
-        } 
+        return error_response(f"서버 오류가 발생했습니다.", cors_headers, 500)
+
+def error_response(message, headers, status_code=400):
+    """
+    오류 응답 생성 헬퍼 함수
+    
+    Parameters:
+    - message: 오류 메시지
+    - headers: 응답 헤더
+    - status_code: HTTP 상태 코드
+    
+    Returns:
+    - API Gateway 응답 객체
+    """
+    return {
+        'statusCode': status_code,
+        'headers': headers,
+        'body': json.dumps({'error': message}, ensure_ascii=False)
+    } 
