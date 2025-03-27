@@ -165,6 +165,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     # 채팅 응답 생성
                     response = chat_service.process_message(user_message, session_id)
                     
+                    # 응답에 session_id 추가
+                    if isinstance(response, dict) and 'session_id' not in response:
+                        response['session_id'] = session_id
+                    
                     return {
                         'statusCode': 200,
                         'headers': cors_headers,
@@ -172,7 +176,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     }
                 except Exception as e:
                     logger.error(f"메시지 처리 중 오류: {str(e)}", exc_info=True)
-                    return error_response(f"메시지 처리 중 오류가 발생했습니다.", cors_headers, 500)
+                    return error_response(f"메시지 처리 중 오류가 발생했습니다: {str(e)}", cors_headers, 500)
                 
             elif path.endswith('/chat/reset'):
                 # 대화 초기화 엔드포인트

@@ -211,7 +211,7 @@ class DocumentStore:
         
     def search_similar(self, query_embedding: List[float], top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        쿼리 임베딩과 유사한 문서 검색
+        쿼리 임베딩과 유사한 문서 검색 (라이브러리 의존성 없이 구현)
         
         Parameters:
         - query_embedding: 쿼리 임베딩
@@ -243,6 +243,7 @@ class DocumentStore:
                     
                 # 최대 문서 수 조정
                 top_k = min(top_k, len(similarities))
+                # 유사도 기준으로 정렬된 인덱스 가져오기
                 top_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)[:top_k]
                 
                 return [self.documents[i] for i in top_indices]

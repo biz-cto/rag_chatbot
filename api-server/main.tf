@@ -133,7 +133,8 @@ resource "null_resource" "install_dependencies" {
       echo "의존성 파일: $REQUIREMENTS_FILE"
       
       # Python 의존성 설치
-      pip install -r $REQUIREMENTS_FILE -t ${local.package_dir}
+      PYTHONPATH="${local.package_dir}" pip install --upgrade pip
+      PYTHONPATH="${local.package_dir}" pip install -r $REQUIREMENTS_FILE -t ${local.package_dir} --no-cache-dir
       
       # 의존성 설치 확인
       if [ $? -ne 0 ]; then
@@ -159,6 +160,14 @@ resource "null_resource" "install_dependencies" {
       find ${local.package_dir} -name "*.dist-info" -type d -exec rm -rf {} + 2>/dev/null || true
       find ${local.package_dir} -name "*.egg-info" -type d -exec rm -rf {} + 2>/dev/null || true
       find ${local.package_dir} -name "*.so" -type f -exec strip {} \; 2>/dev/null || true
+      find ${local.package_dir} -name "tests" -type d -exec rm -rf {} + 2>/dev/null || true
+      
+      # Lambda에 불필요한 대용량 패키지 제거
+      echo "불필요한 패키지 제거 중..."
+      rm -rf ${local.package_dir}/numpy/tests
+      rm -rf ${local.package_dir}/bin
+      rm -rf ${local.package_dir}/boto3/data
+      rm -rf ${local.package_dir}/botocore/data
       
       # 패키지 크기 확인
       du -sh ${local.package_dir}
