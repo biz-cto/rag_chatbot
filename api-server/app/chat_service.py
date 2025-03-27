@@ -79,63 +79,59 @@ class ChatService:
         if not hasattr(self, 'llm') or self.llm.bedrock_runtime is None:
             logger.warning("BedrockClient가 정상적으로 초기화되지 않았습니다. LLM 응답 생성 기능이 제한됩니다.")
     
-    def _extract_detailed_source_info(self, doc):
-        """
-        문서에서 자세한 출처 정보와 내용 추출
-        
-        Parameters:
-        - doc: 문서 딕셔너리
-        
-        Returns:
-        - source_display: 출처 표시 문자열
-        - content_lines: 내용 줄 목록
-        """
-        # 기본값 초기화
-        source_display = "문서"
+    def _extract_detailed_source_info(self, doc: Dict[str, Any]) -> Tuple[str, List[str]]:
+        """문서에서 상세 출처 정보와 내용을 추출합니다."""
+        source_display = "알 수 없는 출처"
         content_lines = []
         
-        # 출처 정보 구성
-        if 'source' in doc:
-            source_display = doc['source']
+        try:
+            # 메타데이터에서 정보 추출
+            metadata = doc.get('metadata', {})
+            source = metadata.get('source', '')
+            file = metadata.get('file', '')
+            page = metadata.get('page', '')
+            content = doc.get('content', '')
             
-            # 파일 정보 추출
-            if 'file' in doc:
-                file_name = doc['file'].split("/")[-1] if "/" in doc['file'] else doc['file']
-                source_display = f"PDF 파일: {file_name}"
+            # 파일명에서 확장자 제거
+            if file:
+                file = os.path.splitext(os.path.basename(file))[0]
+            
+            # 출처 표시 문자열 구성
+            source_parts = []
+            if file:
+                source_parts.append(f"파일: {file}")
+            if page:
+                source_parts.append(f"페이지: {page}")
+            if source:
+                source_parts.append(f"출처: {source}")
+            
+            if source_parts:
+                source_display = " | ".join(source_parts)
+            
+            # 내용 처리
+            if content:
+                # 줄 단위로 분리하고 빈 줄 제거
+                lines = [line.strip() for line in content.split('\n') if line.strip()]
                 
-                # 페이지 정보 추가
-                if 'page' in doc:
-                    page_num = doc['page']
-                    source_display += f" (페이지: {page_num}"
-                    
-                    # 내용에서 줄 번호 추정
-                    if 'content' in doc:
-                        line_count = len(doc['content'].split('\n'))
-                        source_display += f", 줄: 1-{line_count})"
-                    else:
-                        source_display += ")"
-        
-        # 내용에서 주요 줄 추출
-        if 'content' in doc:
-            content = doc['content']
-            lines = content.split('\n')
+                # 짧은 문서는 모든 줄 표시
+                if len(lines) <= 5:
+                    content_lines = lines
+                else:
+                    # 긴 문서는 처음과 마지막 줄만 표시
+                    content_lines = [
+                        lines[0],
+                        "... 중략 (총 {}줄) ...".format(len(lines)),
+                        lines[-1]
+                    ]
+                
+                # 각 줄 앞에 줄 번호 추가
+                content_lines = [f"[줄 {i+1}] {line}" for i, line in enumerate(content_lines)]
             
-            # 짧은 내용은 전부 표시
-            if len(lines) <= 3:
-                for i, line in enumerate(lines):
-                    if line.strip():  # 빈 줄은 제외
-                        content_lines.append(f"[줄 {i+1}] {line.strip()}")
-            else:
-                # 첫 줄과 마지막 줄만 표시
-                if lines[0].strip():
-                    content_lines.append(f"[줄 1] {lines[0].strip()}")
-                if len(lines) > 1 and lines[-1].strip():
-                    content_lines.append(f"[줄 {len(lines)}] {lines[-1].strip()}")
-                # 중간에 생략 표시
-                if len(lines) > 3:
-                    content_lines.append(f"... 중략 (총 {len(lines)}줄) ...")
+        except Exception as e:
+            logger.error(f"출처 정보 추출 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
         
-        return source_display, content_lines or ["관련 문서 내용"]
+        return source_display, content_lines
     
     def process_message(self, user_message: str, session_id: str) -> Dict[str, Any]:
         """
