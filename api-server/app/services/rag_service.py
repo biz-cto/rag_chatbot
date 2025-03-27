@@ -88,7 +88,7 @@ class RagService:
             try:
                 # AWS SDK는 환경 변수에서 자격증명을 자동으로 가져오므로 직접 전달할 필요가 없음
                 llm = ChatBedrock(
-                    model_id="apac.anthropic.claude-3-5-sonnet-20241022-v2:0",
+                    model_id="anthropic.claude-3-haiku-20240307-v1:0",
                     model_kwargs={
                         "temperature": 0,
                         "max_tokens": 4096
