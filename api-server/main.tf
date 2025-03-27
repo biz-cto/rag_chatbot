@@ -28,7 +28,7 @@ terraform {
 locals {
   package_dir   = "${path.module}/.lambda_package"
   zip_file_path = "${path.module}/lambda_function.zip"
-  src_dir       = "${path.module}/app"
+  src_dir       = "${path.module}"
 }
 
 # S3 버킷 참조 또는 생성 (ap-northeast-2 리전 사용)
