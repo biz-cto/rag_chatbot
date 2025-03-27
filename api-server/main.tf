@@ -199,7 +199,7 @@ resource "aws_lambda_function" "rag_chatbot" {
 
   environment {
     variables = {
-      AWS_REGION         = var.aws_region
+      CUSTOM_AWS_REGION   = var.aws_region
       S3_BUCKET_NAME     = var.s3_bucket_name
       LAMBDA_ENVIRONMENT = "true"
       BATCH_SIZE         = tostring(var.batch_size)

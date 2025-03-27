@@ -15,7 +15,7 @@ def validate_environment():
     """환경 변수를 검증하고 기본값을 설정합니다."""
     # 필수 환경 변수
     env_vars = {
-        "AWS_REGION": os.environ.get("AWS_REGION", "ap-northeast-2"),
+        "AWS_REGION": os.environ.get("CUSTOM_AWS_REGION", os.environ.get("AWS_REGION", "ap-northeast-2")),
         "S3_BUCKET_NAME": os.environ.get("S3_BUCKET_NAME", "garden-rag-01")
     }
     
