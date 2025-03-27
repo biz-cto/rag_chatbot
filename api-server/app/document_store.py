@@ -57,16 +57,14 @@ class DocumentStore:
         - boto3 S3 클라이언트
         """
         try:
-            # 재시도 구성을 통한 S3 클라이언트 생성
-            config = botocore.config.Config(
-                retries={
-                    'max_attempts': 10,
-                    'mode': 'adaptive'
-                },
-                connect_timeout=5,
-                read_timeout=60
-            )
-            return boto3.client('s3', region_name=aws_region, config=config)
+            # 간단한 클라이언트 생성
+            session = boto3.Session(region_name=aws_region)
+            
+            # 클라이언트 생성 시도
+            logger.info(f"S3 클라이언트 생성 시도: 리전={aws_region}")
+            s3_client = session.client('s3', region_name=aws_region)
+            logger.info("S3 클라이언트 생성 성공")
+            return s3_client
         except Exception as e:
             logger.error(f"S3 클라이언트 생성 실패: {str(e)}")
             # 기본 클라이언트로 폴백
@@ -79,6 +77,10 @@ class DocumentStore:
         Returns:
         - 버킷 존재 여부
         """
+        if self.s3_client is None:
+            logger.error("S3 클라이언트가 초기화되지 않았습니다.")
+            return False
+            
         try:
             self.s3_client.head_bucket(Bucket=self.s3_bucket_name)
             return True

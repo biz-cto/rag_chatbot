@@ -39,7 +39,7 @@ class EmbeddingService:
         # 환경 변수에서 배치 크기 설정 가져오기
         self.batch_size = int(os.environ.get("BATCH_SIZE", "10"))
         
-        logger.info(f"EmbeddingService 초기화 완료 - 모델: {self.model_id}, 배치 크기: {self.batch_size}")
+        logger.info(f"EmbeddingService, 리전: {aws_region}, 초기화 완료 - 모델: {self.model_id}, 배치 크기: {self.batch_size}")
         
         # 임베딩 디폴트 차원
         self.default_dimension = 1536
@@ -55,20 +55,27 @@ class EmbeddingService:
         - Bedrock 클라이언트
         """
         try:
-            # 재시도 구성을 통한 Bedrock 클라이언트 생성
-            config = botocore.config.Config(
-                retries={
-                    'max_attempts': 3,
-                    'mode': 'adaptive'
-                },
-                connect_timeout=5,
-                read_timeout=30
+            # 간단한 클라이언트 생성 - 재시도 로직은 직접 관리
+            session = boto3.Session(region_name=aws_region)
+            
+            # 클라이언트 생성 시도
+            logger.info(f"bedrock-runtime 서비스 클라이언트 생성 시도: 리전={aws_region}")
+            bedrock_client = session.client(
+                service_name='bedrock-runtime', 
+                region_name=aws_region
             )
-            return boto3.client('bedrock-runtime', region_name=aws_region, config=config)
+            logger.info("bedrock-runtime 클라이언트 생성 성공")
+            return bedrock_client
         except Exception as e:
             logger.error(f"Bedrock 클라이언트 생성 실패: {str(e)}")
-            # 기본 클라이언트로 폴백
-            return boto3.client('bedrock-runtime', region_name=aws_region)
+            
+            # 폴백: 서비스 이름에 버전 포함해서 시도
+            try:
+                logger.info("대체 방법으로 bedrock 클라이언트 생성 시도")
+                return boto3.client('bedrock', region_name=aws_region)
+            except Exception as e2:
+                logger.error(f"대체 bedrock 클라이언트 생성도 실패: {str(e2)}")
+                return None
     
     def _exponential_backoff(self, retry_attempt: int) -> float:
         """
@@ -98,6 +105,11 @@ class EmbeddingService:
             logger.warning("임베딩하려는 쿼리 텍스트가 비어 있습니다.")
             return [0.0] * self.default_dimension
             
+        # Bedrock 클라이언트가 없으면 기본 임베딩 반환
+        if self.bedrock_runtime is None:
+            logger.warning("Bedrock 클라이언트가 초기화되지 않아 기본 임베딩 반환")
+            return [0.0] * self.default_dimension
+            
         return self._get_embedding(text)
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -113,6 +125,11 @@ class EmbeddingService:
         if not texts:
             logger.warning("임베딩할 문서 텍스트가 비어 있습니다.")
             return []
+            
+        # Bedrock 클라이언트가 없으면 기본 임베딩 반환
+        if self.bedrock_runtime is None:
+            logger.warning("Bedrock 클라이언트가 초기화되지 않아 기본 임베딩 반환")
+            return [[0.0] * self.default_dimension for _ in range(len(texts))]
             
         embeddings = []
         # 배치 크기 환경 변수에서 가져오기
@@ -172,6 +189,11 @@ class EmbeddingService:
                 request_body = json.dumps({
                     "inputText": cleaned_text
                 })
+                
+                # Bedrock 클라이언트가 없으면 기본 임베딩 반환 (중간 검사)
+                if self.bedrock_runtime is None:
+                    logger.warning("Bedrock 클라이언트가 없어 임베딩 생성 불가")
+                    return [0.0] * self.default_dimension
                 
                 # Bedrock 호출
                 response = self.bedrock_runtime.invoke_model(

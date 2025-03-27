@@ -39,7 +39,7 @@ class BedrockClient:
         self.max_retries = 3
         self.retry_base_delay = 1.0
         
-        logger.info(f"BedrockClient 초기화 완료 - 기본 모델: {self.model_id}")
+        logger.info(f"BedrockClient, 리전: {aws_region}, 초기화 완료 - 기본 모델: {self.model_id}")
     
     def _create_bedrock_client(self, aws_region: str):
         """
@@ -52,20 +52,27 @@ class BedrockClient:
         - Bedrock 클라이언트
         """
         try:
-            # 재시도 구성을 통한 Bedrock 클라이언트 생성
-            config = botocore.config.Config(
-                retries={
-                    'max_attempts': 5,
-                    'mode': 'adaptive'
-                },
-                connect_timeout=5,
-                read_timeout=120
+            # 간단한 클라이언트 생성 - 재시도 로직은 직접 관리
+            session = boto3.Session(region_name=aws_region)
+            
+            # 클라이언트 생성 시도
+            logger.info(f"bedrock-runtime 서비스 클라이언트 생성 시도: 리전={aws_region}")
+            bedrock_client = session.client(
+                service_name='bedrock-runtime', 
+                region_name=aws_region
             )
-            return boto3.client('bedrock-runtime', region_name=aws_region, config=config)
+            logger.info("bedrock-runtime 클라이언트 생성 성공")
+            return bedrock_client
         except Exception as e:
             logger.error(f"Bedrock 클라이언트 생성 실패: {str(e)}")
-            # 기본 클라이언트로 폴백
-            return boto3.client('bedrock-runtime', region_name=aws_region)
+            
+            # 폴백: 서비스 이름에 버전 포함해서 시도
+            try:
+                logger.info("대체 방법으로 bedrock 클라이언트 생성 시도")
+                return boto3.client('bedrock', region_name=aws_region)
+            except Exception as e2:
+                logger.error(f"대체 bedrock 클라이언트 생성도 실패: {str(e2)}")
+                return None
     
     def _is_bedrock_available(self, model_id: str) -> bool:
         """
@@ -77,10 +84,17 @@ class BedrockClient:
         Returns:
         - 사용 가능 여부
         """
+        if self.bedrock_runtime is None:
+            logger.warning("Bedrock 클라이언트가 없어 모델 가용성 확인 불가")
+            return False
+            
         try:
-            # 클라이언트 및 모델 사용 가능성 테스트
-            self.bedrock_runtime.get_model_invocation_logging_configuration(
-                modelId=model_id
+            # 클라이언트 및 모델 사용 가능성 테스트 - 간단한 요청으로 확인
+            self.bedrock_runtime.invoke_model(
+                modelId=model_id,
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps({"anthropic_version": "bedrock-2023-05-31", "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]})
             )
             return True
         except Exception as e:
@@ -115,6 +129,11 @@ class BedrockClient:
         - LLM 응답
         """
         max_tokens = max_tokens or self.max_tokens
+        
+        # Bedrock 클라이언트가 없으면 기본 응답 반환
+        if self.bedrock_runtime is None:
+            logger.error("Bedrock 클라이언트가 초기화되지 않았습니다.")
+            return "죄송합니다. 현재 서비스에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요."
         
         # 요청 내용 로그
         logger.info(f"응답 생성 요청 - 대화 길이: {len(conversation_history)}, 시스템 프롬프트 길이: {len(system_prompt)}")

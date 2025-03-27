@@ -30,13 +30,45 @@ class ChatService:
         self.aws_region = aws_region
         self.conversations: Dict[str, List[Dict[str, str]]] = {}
         
-        # 서비스 컴포넌트 초기화
-        self.embedding_service = EmbeddingService(aws_region)
-        self.document_store = DocumentStore(s3_bucket_name, aws_region)
-        self.retriever = Retriever(self.document_store, self.embedding_service)
-        self.llm = BedrockClient(aws_region)
+        # 단계적으로 서비스 컴포넌트 초기화
+        logger.info(f"ChatService 초기화 시작 - 버킷: {s3_bucket_name}, 리전: {aws_region}")
         
-        logger.info(f"ChatService 초기화 완료 - 버킷: {s3_bucket_name}, 리전: {aws_region}")
+        try:
+            # 임베딩 서비스 초기화
+            logger.info("EmbeddingService 초기화 중...")
+            self.embedding_service = EmbeddingService(aws_region)
+            
+            # 문서 저장소 초기화
+            logger.info("DocumentStore 초기화 중...")
+            self.document_store = DocumentStore(s3_bucket_name, aws_region)
+            
+            # 검색기 초기화
+            logger.info("Retriever 초기화 중...")
+            self.retriever = Retriever(self.document_store, self.embedding_service)
+            
+            # LLM 클라이언트 초기화
+            logger.info("BedrockClient 초기화 중...")
+            self.llm = BedrockClient(aws_region)
+            
+            # 모든 컴포넌트 초기화 확인
+            self._check_components()
+            
+            logger.info(f"ChatService 초기화 완료 - 버킷: {s3_bucket_name}, 리전: {aws_region}")
+        except Exception as e:
+            logger.error(f"ChatService 초기화 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+    
+    def _check_components(self):
+        """서비스 컴포넌트 유효성 검사"""
+        if not hasattr(self, 'embedding_service') or self.embedding_service.bedrock_runtime is None:
+            logger.warning("EmbeddingService가 정상적으로 초기화되지 않았습니다. 임베딩 기능이 제한됩니다.")
+        
+        if not hasattr(self, 'document_store') or not self.document_store.documents:
+            logger.warning("DocumentStore가 정상적으로 초기화되지 않았거나 문서가 로드되지 않았습니다.")
+        
+        if not hasattr(self, 'llm') or self.llm.bedrock_runtime is None:
+            logger.warning("BedrockClient가 정상적으로 초기화되지 않았습니다. LLM 응답 생성 기능이 제한됩니다.")
     
     def process_message(self, user_message: str, session_id: str) -> Dict[str, Any]:
         """
@@ -70,16 +102,21 @@ class ChatService:
         })
         
         try:
-            # 관련 문서 검색
-            relevant_docs = self.retriever.retrieve(user_message)
+            # 관련 문서 검색 시도
+            relevant_docs = []
+            try:
+                if hasattr(self, 'retriever'):
+                    relevant_docs = self.retriever.retrieve(user_message)
+            except Exception as retriever_error:
+                logger.error(f"문서 검색 중 오류: {str(retriever_error)}")
             
             # 검색 결과 확인
             if not relevant_docs:
                 logger.warning(f"쿼리 '{user_message[:30]}...'에 대한 관련 문서를 찾지 못했습니다.")
             
             # 컨텍스트 구성
-            context = "\n\n".join([doc['content'] for doc in relevant_docs])
-            sources = [doc['source'] for doc in relevant_docs]
+            context = "\n\n".join([doc['content'] for doc in relevant_docs]) if relevant_docs else ""
+            sources = [doc['source'] for doc in relevant_docs] if relevant_docs else []
             
             # 프롬프트 구성 및 응답 생성
             response = self._generate_response(user_message, context, session_id)
@@ -126,7 +163,15 @@ class ChatService:
         Returns:
         - LLM 응답
         """
-        # 사용자 대화 기록 (최근 5개 메시지만 사용)
+        # LLM 클라이언트가 초기화되지 않은 경우
+        if not hasattr(self, 'llm') or self.llm.bedrock_runtime is None:
+            logger.warning("LLM 클라이언트가 초기화되지 않아 기본 응답 반환")
+            if context:
+                return "이 질문에 관련된 정보를 찾았으나, 현재 AI 응답 생성에 문제가 있습니다. 잠시 후 다시 시도해 주세요."
+            else:
+                return "죄송합니다. 현재 AI 응답 생성에 문제가 있습니다. 잠시 후 다시 시도해 주세요."
+                
+        # 사용자 대화 기록 (최근 10개 메시지만 사용)
         conversation_history = self.conversations[session_id][-10:]
         
         # 프롬프트 구성
@@ -139,12 +184,18 @@ class ChatService:
 """
         
         # LLM에 요청 보내기
-        response = self.llm.generate_response(
-            system_prompt=system_prompt,
-            conversation_history=conversation_history
-        )
-        
-        return response
+        try:
+            response = self.llm.generate_response(
+                system_prompt=system_prompt,
+                conversation_history=conversation_history
+            )
+            return response
+        except Exception as e:
+            logger.error(f"LLM 응답 생성 중 오류: {str(e)}")
+            if context:
+                return "관련 정보를 찾았으나 응답 생성 중 오류가 발생했습니다. 질문을 다시 작성해 주세요."
+            else:
+                return "죄송합니다. 응답 생성 중 오류가 발생했습니다. 다시 시도해 주세요."
     
     def reset_conversation(self, session_id: str) -> None:
         """

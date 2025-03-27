@@ -18,7 +18,7 @@ terraform {
 
 # 로컬 변수 정의
 locals {
-  package_dir   = "${path.module}/package"
+  package_dir   = "${path.module}/.lambda_package"
   zip_file_path = "${path.module}/lambda_function.zip"
 }
 
@@ -45,17 +45,19 @@ locals {
 
 # Lambda 함수를 위한 IAM 역할
 resource "aws_iam_role" "lambda_role" {
-  name = "rag_chatbot_lambda_role"
+  name = "rag-chatbot-lambda-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
       }
-    }]
+    ]
   })
 
   tags = {
@@ -70,21 +72,52 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-resource "aws_iam_role_policy_attachment" "s3_read" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
-}
-
-# Bedrock 모델 사용 권한 정책
-resource "aws_iam_policy" "bedrock_policy" {
-  name        = "rag_chatbot_bedrock_policy"
-  description = "Allows Lambda function to invoke Bedrock models"
+# S3 접근 정책 추가
+resource "aws_iam_policy" "s3_policy" {
+  name        = "rag-chatbot-s3-policy"
+  description = "RAG Chatbot S3 액세스 정책"
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Action   = "bedrock:InvokeModel"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Effect   = "Allow"
+        Resource = [
+          "arn:aws:s3:::${var.s3_bucket_name}",
+          "arn:aws:s3:::${var.s3_bucket_name}/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "s3_attachment" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = aws_iam_policy.s3_policy.arn
+}
+
+# Bedrock 액세스 정책 추가
+resource "aws_iam_policy" "bedrock_policy" {
+  name        = "rag-chatbot-bedrock-policy"
+  description = "RAG Chatbot Bedrock 액세스 정책"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action   = "bedrock:*"
+        Effect   = "Allow"
+        Resource = "*"
+      },
+      {
+        Action   = [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream"
+        ]
         Effect   = "Allow"
         Resource = [
           "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v1",
@@ -166,8 +199,6 @@ resource "null_resource" "install_dependencies" {
       echo "불필요한 패키지 제거 중..."
       rm -rf ${local.package_dir}/numpy/tests
       rm -rf ${local.package_dir}/bin
-      rm -rf ${local.package_dir}/boto3/data
-      rm -rf ${local.package_dir}/botocore/data
       
       # 패키지 크기 확인
       du -sh ${local.package_dir}

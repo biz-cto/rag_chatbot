@@ -43,6 +43,7 @@ def get_chat_service():
     if _chat_service is None:
         try:
             logger.info("ChatService 초기화 중...")
+            logger.info(f"사용 중인 리전: {ENV['AWS_REGION']}, S3 버킷: {ENV['S3_BUCKET_NAME']}")
             _chat_service = ChatService(
                 s3_bucket_name=ENV["S3_BUCKET_NAME"],
                 aws_region=ENV["AWS_REGION"]
@@ -69,8 +70,10 @@ def _create_fallback_service():
     class FallbackService:
         def __init__(self):
             self.conversations = {}
+            logger.info("FallbackService 초기화 완료")
             
         def process_message(self, user_message, session_id):
+            logger.info(f"FallbackService 메시지 처리 - 세션: {session_id}")
             # 대화 기록 관리
             if session_id not in self.conversations:
                 self.conversations[session_id] = []
@@ -95,8 +98,11 @@ def _create_fallback_service():
             }
             
         def reset_conversation(self, session_id):
+            logger.info(f"FallbackService 대화 초기화 - 세션: {session_id}")
             if session_id in self.conversations:
                 self.conversations[session_id] = []
+                return True
+            return False
     
     return FallbackService()
 
