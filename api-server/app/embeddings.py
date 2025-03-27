@@ -3,6 +3,7 @@ import logging
 import boto3
 import time
 import random
+import os
 from typing import List, Dict, Any, Optional
 from botocore.exceptions import ClientError, ConnectionError
 
@@ -34,7 +35,10 @@ class EmbeddingService:
         self.max_retries = 5
         self.retry_base_delay = 0.5
         
-        logger.info(f"EmbeddingService 초기화 완료 - 모델: {self.model_id}")
+        # 환경 변수에서 배치 크기 설정 가져오기
+        self.batch_size = int(os.environ.get("BATCH_SIZE", "10"))
+        
+        logger.info(f"EmbeddingService 초기화 완료 - 모델: {self.model_id}, 배치 크기: {self.batch_size}")
         
         # 임베딩 디폴트 차원
         self.default_dimension = 1536
@@ -110,8 +114,8 @@ class EmbeddingService:
             return []
             
         embeddings = []
-        # 배치 크기
-        batch_size = 5
+        # 배치 크기 환경 변수에서 가져오기
+        batch_size = self.batch_size
         
         # 배치 처리
         for i in range(0, len(texts), batch_size):

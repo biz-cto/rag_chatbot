@@ -52,8 +52,53 @@ def get_chat_service():
             error_msg = f"ChatService 초기화 실패: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            raise RuntimeError(error_msg)
+            
+            # 폴백 서비스 - 제한된 기능으로 응답
+            logger.warning("제한된 기능의 폴백 서비스로 초기화합니다.")
+            try:
+                _chat_service = _create_fallback_service()
+            except Exception as fallback_error:
+                logger.error(f"폴백 서비스 초기화도 실패: {str(fallback_error)}")
+                raise RuntimeError(error_msg)
+    
     return _chat_service
+
+def _create_fallback_service():
+    """초기화 실패 시 사용할 제한된 기능의 서비스를 생성합니다."""
+    # 간단한 폴백 서비스 구현
+    class FallbackService:
+        def __init__(self):
+            self.conversations = {}
+            
+        def process_message(self, user_message, session_id):
+            # 대화 기록 관리
+            if session_id not in self.conversations:
+                self.conversations[session_id] = []
+                
+            self.conversations[session_id].append({
+                "role": "user", 
+                "content": user_message
+            })
+            
+            # 시스템 응답
+            response = "죄송합니다. 현재 서비스에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요."
+            
+            self.conversations[session_id].append({
+                "role": "assistant",
+                "content": response
+            })
+            
+            return {
+                "response": response,
+                "sources": [],
+                "error": "service_initialization_failed"
+            }
+            
+        def reset_conversation(self, session_id):
+            if session_id in self.conversations:
+                self.conversations[session_id] = []
+    
+    return FallbackService()
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """

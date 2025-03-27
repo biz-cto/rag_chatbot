@@ -22,9 +22,25 @@ locals {
   zip_file_path = "${path.module}/lambda_function.zip"
 }
 
-# S3 버킷 참조
-data "aws_s3_bucket" "pdfs_bucket" {
+# S3 버킷 참조 또는 생성
+resource "aws_s3_bucket" "pdfs_bucket" {
+  count  = var.create_s3_bucket ? 1 : 0
   bucket = var.s3_bucket_name
+  
+  tags = {
+    Name        = var.s3_bucket_name
+    Environment = var.environment
+    Managed     = "terraform"
+  }
+}
+
+data "aws_s3_bucket" "existing_bucket" {
+  count  = var.create_s3_bucket ? 0 : 1
+  bucket = var.s3_bucket_name
+}
+
+locals {
+  bucket_id = var.create_s3_bucket ? aws_s3_bucket.pdfs_bucket[0].id : data.aws_s3_bucket.existing_bucket[0].id
 }
 
 # Lambda 함수를 위한 IAM 역할
@@ -66,11 +82,25 @@ resource "aws_iam_policy" "bedrock_policy" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Action   = "bedrock:InvokeModel"
-      Effect   = "Allow"
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Action   = "bedrock:InvokeModel"
+        Effect   = "Allow"
+        Resource = [
+          "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v1",
+          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0",
+          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-instant-v1"
+        ]
+      },
+      {
+        Action   = [
+          "bedrock:GetFoundationModel",
+          "bedrock:ListFoundationModels"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
   })
 }
 
@@ -152,7 +182,7 @@ resource "aws_lambda_function" "rag_chatbot" {
   function_name    = "rag-chatbot"
   role             = aws_iam_role.lambda_role.arn
   handler          = "lambda_function.lambda_handler"
-  runtime          = "python3.11"
+  runtime          = var.lambda_runtime
   filename         = data.archive_file.lambda_package.output_path
   source_code_hash = data.archive_file.lambda_package.output_base64sha256
   timeout          = var.lambda_timeout
@@ -163,6 +193,7 @@ resource "aws_lambda_function" "rag_chatbot" {
       AWS_REGION         = var.aws_region
       S3_BUCKET_NAME     = var.s3_bucket_name
       LAMBDA_ENVIRONMENT = "true"
+      BATCH_SIZE         = tostring(var.batch_size)
     }
   }
 
@@ -180,7 +211,12 @@ resource "aws_lambda_function" "rag_chatbot" {
 # CloudWatch 로그 그룹
 resource "aws_cloudwatch_log_group" "lambda_logs" {
   name              = "/aws/lambda/${aws_lambda_function.rag_chatbot.function_name}"
-  retention_in_days = 14
+  retention_in_days = var.log_retention_days
+  
+  tags = {
+    Name        = "rag-chatbot-logs"
+    Environment = var.environment
+  }
 }
 
 # API Gateway REST API
@@ -248,7 +284,7 @@ resource "aws_api_gateway_integration_response" "chat_options_integration_respon
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin"  = "'*'"
     "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,OPTIONS'"
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
   }
 }
 
@@ -330,7 +366,7 @@ resource "aws_api_gateway_integration_response" "reset_options_integration_respo
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin"  = "'*'"
     "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,OPTIONS'"
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
   }
 }
 
