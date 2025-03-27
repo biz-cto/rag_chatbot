@@ -34,13 +34,13 @@ class RagService:
             logger.info("RAG 시스템 초기화 시작")
             
             # AWS 자격 증명 확인
-            aws_access_key = os.environ.get("AWS_ACCESS_KEY")
-            aws_secret_key = os.environ.get("AWS_SECRET_KEY")
+            aws_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+            aws_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
             region = os.environ.get("AWS_REGION", "ap-northeast-2")
             
             if not aws_access_key or not aws_secret_key:
                 logger.error("AWS 자격 증명이 설정되지 않았습니다.")
-                raise ValueError("AWS 자격 증명이 필요합니다. AWS_ACCESS_KEY와 AWS_SECRET_KEY 환경 변수를 설정하세요.")
+                raise ValueError("AWS 자격 증명이 필요합니다. AWS_ACCESS_KEY_ID와 AWS_SECRET_ACCESS_KEY 환경 변수를 설정하세요.")
             
             # S3 버킷 이름 가져오기
             bucket_name = os.environ.get("S3_BUCKET_NAME")
