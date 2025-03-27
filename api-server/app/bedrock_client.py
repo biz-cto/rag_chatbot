@@ -136,6 +136,9 @@ class BedrockClient:
         Returns:
         - LLM 응답
         """
+        # 환경 변수 변경 감지하여 모델 업데이트
+        self._update_model_from_env()
+        
         max_tokens = max_tokens or self.max_tokens
         
         # Bedrock 클라이언트가 없으면 기본 응답 반환
@@ -304,3 +307,23 @@ class BedrockClient:
             return f"죄송합니다. 현재 응답을 생성할 수 없습니다. 질문을 다시 작성해 주시거나 나중에 다시 시도해 주세요."
         else:
             return "죄송합니다. 서비스에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요." 
+
+    def _update_model_from_env(self):
+        """
+        환경 변수 변경을 감지하여 모델 설정 업데이트
+        """
+        # 환경 변수로부터 모드 확인
+        smart_mode = os.environ.get("SMART_MODE", "").lower() == "true"
+        fast_mode = os.environ.get("FAST_MODE", "").lower() == "true"
+        
+        # 이전에 설정한 모드와 다른 경우에만 변경
+        if smart_mode and self.model_id != "anthropic.claude-3-haiku-20240307-v1:0":
+            # 스마트 모드로 전환
+            self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+            self.max_tokens = 2048
+            logger.info("모델 전환: 스마트 모드 활성화 (Claude 3 Haiku)")
+        elif fast_mode and self.model_id != "anthropic.claude-instant-v1":
+            # 빠른 응답 모드로 전환
+            self.model_id = "anthropic.claude-instant-v1"
+            self.max_tokens = 1024
+            logger.info("모델 전환: 빠른 응답 모드 활성화 (Claude Instant)") 

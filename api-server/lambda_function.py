@@ -157,6 +157,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 # 채팅 엔드포인트
                 user_message = body.get('message', '')
                 session_id = body.get('session_id', '')
+                model_type = body.get('model_type', '')  # 'smart' 또는 'speed' 옵션
                 
                 if not user_message:
                     return error_response('메시지가 제공되지 않았습니다.', cors_headers)
@@ -167,14 +168,31 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     session_id = str(uuid.uuid4())
                     logger.info(f"새 세션 ID 생성: {session_id}")
                 
+                # 모델 타입에 따라 환경 변수 임시 설정
+                original_smart_mode = os.environ.get("SMART_MODE", "false")
+                original_fast_mode = os.environ.get("FAST_MODE", "false")
+                
                 try:
+                    # 모델 타입 설정
+                    if model_type.lower() == 'smart':
+                        logger.info("스마트 모드로 요청 처리")
+                        os.environ["SMART_MODE"] = "true"
+                        os.environ["FAST_MODE"] = "false"
+                    elif model_type.lower() == 'speed':
+                        logger.info("빠른 응답 모드로 요청 처리")
+                        os.environ["SMART_MODE"] = "false"
+                        os.environ["FAST_MODE"] = "true"
+                    
                     # 채팅 응답 생성
                     response = chat_service.process_message(user_message, session_id)
                     
-                    # 응답에 session_id 추가
+                    # 모델 타입 정보 추가
                     if isinstance(response, dict):
                         if 'session_id' not in response:
                             response['session_id'] = session_id
+                            
+                        if model_type:
+                            response['model_type'] = model_type
                         
                         # 응답 포맷 처리: JSON 형식 지원 (answer/sources 키)
                         if 'answer' in response and 'response' not in response:
@@ -221,8 +239,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     
                     return final_response
                 except Exception as e:
+                    # 환경 변수 원래대로 복원
+                    os.environ["SMART_MODE"] = original_smart_mode
+                    os.environ["FAST_MODE"] = original_fast_mode
+                    
                     logger.error(f"메시지 처리 중 오류: {str(e)}", exc_info=True)
                     return error_response(f"메시지 처리 중 오류가 발생했습니다: {str(e)}", cors_headers, 500)
+                finally:
+                    # 환경 변수 원래대로 복원
+                    os.environ["SMART_MODE"] = original_smart_mode
+                    os.environ["FAST_MODE"] = original_fast_mode
                 
             elif path.endswith('/chat/reset'):
                 # 대화 초기화 엔드포인트
