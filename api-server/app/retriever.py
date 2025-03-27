@@ -197,4 +197,26 @@ class Retriever:
         except Exception as e:
             logger.error(f"문서 검색 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
-            return [], {"input_tokens": 0, "model_id": ""} 
+            return [], {"input_tokens": 0, "model_id": ""}
+            
+    def _vector_search(self, query_embedding: List[float], top_k: int = 3) -> List[Dict[str, Any]]:
+        """
+        쿼리 임베딩을 사용하여 문서 저장소에서 유사한 문서 검색
+        
+        Parameters:
+        - query_embedding: 쿼리 임베딩 벡터
+        - top_k: 반환할 최대 문서 수
+        
+        Returns:
+        - 유사한 문서 목록
+        """
+        try:
+            # 문서 저장소의 search_similar 함수 호출
+            similar_docs = self.document_store.search_similar(
+                query_embedding=query_embedding,
+                top_k=top_k
+            )
+            return similar_docs
+        except Exception as e:
+            logger.error(f"벡터 검색 중 오류 발생: {str(e)}")
+            return [] 
