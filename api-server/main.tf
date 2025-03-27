@@ -158,6 +158,12 @@ resource "null_resource" "install_dependencies" {
   triggers = {
     requirements_hash = filemd5("${local.src_dir}/requirements-lambda.txt")
     src_hash = filemd5("${local.src_dir}/lambda_function.py")
+    app_hash = filemd5("${local.src_dir}/app/chat_service.py")
+    embeddings_hash = filemd5("${local.src_dir}/app/embeddings.py")
+    document_store_hash = filemd5("${local.src_dir}/app/document_store.py")
+    retriever_hash = filemd5("${local.src_dir}/app/retriever.py")
+    bedrock_client_hash = filemd5("${local.src_dir}/app/bedrock_client.py")
+    cost_tracker_hash = filemd5("${local.src_dir}/app/utils/cost_tracker.py")
   }
 
   provisioner "local-exec" {
