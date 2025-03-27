@@ -93,7 +93,7 @@ class RagService:
                         "temperature": 0,
                         "max_tokens": 4096
                     },
-                    region_name="us-east-1"
+                    region_name=region
                 )
                 logger.info("LLM 모델 초기화 완료")
             except Exception as e:
