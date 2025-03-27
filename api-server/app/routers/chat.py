@@ -1,4 +1,5 @@
 import logging
+from typing import List, Dict
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
@@ -13,17 +14,22 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     question: str
 
+class SourceContent(BaseModel):
+    source: str
+    contents: List[str]
+
 class ChatResponse(BaseModel):
     answer: str
+    sources: List[SourceContent] = []
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, rag_service: RagService = Depends(get_rag_service)):
     """사용자 질문에 대한 응답을 생성합니다."""
     logger.info(f"질문 받음: {request.question}")
     try:
-        answer = rag_service.answer_question(request.question)
-        logger.debug(f"응답 생성 완료: {answer[:50]}...")
-        return ChatResponse(answer=answer)
+        response = rag_service.answer_question(request.question)
+        logger.debug(f"응답 생성 완료: {response['answer'][:50]}...")
+        return response
     
     except Exception as e:
         logger.error(f"질문 처리 중 오류 발생: {str(e)}", exc_info=True)

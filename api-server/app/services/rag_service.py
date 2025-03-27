@@ -121,7 +121,7 @@ class RagService:
             raise
 
     
-    def answer_question(self, question: str) -> str:
+    def answer_question(self, question: str) -> dict:
         """사용자 질문에 대한 응답을 생성합니다."""
         if self.qa_chain is None:
             error_msg = "RAG 시스템이 초기화되지 않았습니다."
@@ -132,14 +132,18 @@ class RagService:
         try:
             result = self.qa_chain.invoke({"question": question})
             
-            # 소스 문서 정보 추가
+            # 응답 구조화
             answer = result["answer"]
             source_documents = result.get("source_documents", [])
             
+            # 출처별 내용을 담을 리스트
+            sources = []
+            
             if source_documents:
-                answer += "\n\n참고 문서:"
                 unique_sources = {}  # 출처별 내용을 저장하는 사전
-                for i, doc in enumerate(source_documents):
+                
+                # 소스 문서 내용 수집
+                for doc in source_documents:
                     source = doc.metadata.get("source", "알 수 없는 소스")
                     content = doc.page_content.strip()
                     
@@ -151,18 +155,27 @@ class RagService:
                     if content not in unique_sources[source]:
                         unique_sources[source].append(content)
                 
-                # 출처별로 참고 내용 추가
+                # 출처별로 정보 추가
                 for source, contents in unique_sources.items():
-                    answer += f"\n\n- {source}:"
-                    for i, content in enumerate(contents):
-                        # 너무 긴 내용은 적절히 잘라서 보여줌
+                    # 너무 긴 내용은 적절히 잘라서 저장
+                    formatted_contents = []
+                    for content in contents:
                         if len(content) > 200:
                             content = content[:200] + "..."
-                        answer += f"\n  {i+1}. {content}"
+                        formatted_contents.append(content)
+                    
+                    # 출처 정보 추가
+                    sources.append({
+                        "source": source,
+                        "contents": formatted_contents
+                    })
                     logger.debug(f"참고 문서: {source}")
             
             logger.info("응답 생성 완료")
-            return answer
+            return {
+                "answer": answer,
+                "sources": sources
+            }
             
         except Exception as e:
             logger.error(f"질문 처리 중 오류 발생: {str(e)}", exc_info=True)
