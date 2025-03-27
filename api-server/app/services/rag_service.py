@@ -104,7 +104,8 @@ class RagService:
                 else:
                     logger.error(f"LLM 모델 초기화 중 오류 발생: {error_msg}", exc_info=True)
                     raise
-            
+             
+             
             logger.info("대화형 검색 체인 생성 중")
             self.qa_chain = ConversationalRetrievalChain.from_llm(
                 llm=llm,
