@@ -12,7 +12,9 @@ logger = setup_logger("app.routers.chat", "logs/chat.log", logging.INFO)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 class ChatRequest(BaseModel):
-    question: str
+    message: str
+    session_id: str
+    model_type: str = "smart"
 
 class SourceContent(BaseModel):
     source: str
@@ -21,14 +23,16 @@ class SourceContent(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: List[SourceContent] = []
+    session_id: str
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, rag_service: RagService = Depends(get_rag_service)):
     """사용자 질문에 대한 응답을 생성합니다."""
-    logger.info(f"질문 받음: {request.question}")
+    logger.info(f"질문 받음: {request.message}")
     try:
-        response = rag_service.answer_question(request.question)
+        response = rag_service.answer_question(request.message)
         logger.debug(f"응답 생성 완료: {response['answer'][:50]}...")
+        response["session_id"] = request.session_id
         return response
     
     except Exception as e:

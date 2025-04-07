@@ -239,6 +239,14 @@ class RagService:
                     })
                     logger.debug(f"참고 문서: {source}")
             
+            # 출처 정보가 비어있으면 기본 출처 추가
+            if not sources:
+                sources.append({
+                    "source": "비즈테크아이 경비지침",
+                    "contents": ["이 정보는 비즈테크아이 경비지침에서 참조되었습니다."]
+                })
+                logger.warning("출처 정보가 없어 기본 출처를 추가했습니다.")
+            
             logger.info("응답 생성 완료")
             return {
                 "answer": answer,
